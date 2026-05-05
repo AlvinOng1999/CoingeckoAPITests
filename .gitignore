@@ -1,0 +1,32 @@
+# Database — contains emails, passwords, API keys
+accounts.db
+
+# Debug & run artifacts
+debug_screenshots/
+run_screenshots/
+*.png
+dashboard/debug_*.png
+dashboard/debug_*.html
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Environment / secrets
+.env
+*.env
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+
+# Claude settings
+.claude/

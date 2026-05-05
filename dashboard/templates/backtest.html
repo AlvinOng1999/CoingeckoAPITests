@@ -1,0 +1,535 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Backtest — CoinGecko API Manager</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body { background: #fff; color: #0a0a0a; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
+    .dot-alive { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #000; margin-right: 8px; }
+    .navbar { background: #000 !important; border-bottom: 1px solid #111; padding: 14px 28px; }
+    .navbar-brand { color: #fff !important; font-size: 1rem; letter-spacing: .01em; text-decoration: none; }
+    .nav-pill { color: #777; font-size: .85rem; text-decoration: none; padding: 5px 12px; border-radius: 6px; transition: color .15s, background .15s; }
+    .nav-pill:hover { color: #fff; background: #222; }
+    .nav-pill.active { color: #fff; }
+
+    .card { background: #fff; border: 1px solid #e8e8e8; box-shadow: 0 1px 4px rgba(0,0,0,.05); }
+    .section-header { display: flex; justify-content: space-between; align-items: center; padding: 16px 20px 12px; border-bottom: 1px solid #ebebeb; }
+    .section-title { font-size: .9rem; font-weight: 700; color: #0a0a0a; }
+    .stat-card { background: #fff; border: 1px solid #e8e8e8; border-radius: 10px; padding: 20px 18px; text-align: center; transition: border-color .15s; }
+    .stat-card:hover { border-color: #000; }
+    .stat-card .s-label { font-size: .72rem; color: #888; text-transform: uppercase; letter-spacing: .06em; margin-bottom: 6px; }
+    .stat-card .s-value { font-size: 1.5rem; font-weight: 700; color: #0a0a0a; line-height: 1.2; }
+    .stat-card .s-value.sm { font-size: 1.05rem; }
+    .s-value.pos { color: #16a34a; }
+    .s-value.neg { color: #dc2626; }
+
+    /* Autocomplete */
+    .ac-wrap { position: relative; }
+    .ac-dropdown {
+      position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 200;
+      background: #fff; border: 1px solid #e0e0e0; border-radius: 8px;
+      box-shadow: 0 4px 16px rgba(0,0,0,.1); overflow: hidden; display: none;
+    }
+    .ac-item { display: flex; align-items: center; gap: 10px; padding: 9px 14px; cursor: pointer; transition: background .1s; font-size: .875rem; }
+    .ac-item:hover, .ac-item.highlighted { background: #f4f4f4; }
+    .ac-item img { width: 22px; height: 22px; border-radius: 50%; border: 1px solid #ebebeb; flex-shrink: 0; }
+    .ac-img-ph { width: 22px; height: 22px; border-radius: 50%; background: #f0f0f0; border: 1px solid #ebebeb; flex-shrink: 0; font-size: .6rem; color: #bbb; display: flex; align-items: center; justify-content: center; }
+    .ac-name { font-weight: 600; color: #0a0a0a; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .ac-sym { font-size: .75rem; color: #888; flex-shrink: 0; }
+    .ac-rank { font-size: .68rem; color: #aaa; background: #f4f4f4; border-radius: 3px; padding: 1px 5px; flex-shrink: 0; }
+
+    .form-label { font-size: .8rem; font-weight: 600; color: #555; margin-bottom: 4px; }
+    .form-control, .form-select { border-color: #e0e0e0; font-size: .9rem; color: #0a0a0a; }
+    .form-control:focus, .form-select:focus { border-color: #000; box-shadow: 0 0 0 2px rgba(0,0,0,.07); }
+
+    .badge-buy  { background: #dcfce7; color: #16a34a; padding: 2px 8px; border-radius: 4px; font-size: .72rem; font-weight: 700; }
+    .badge-sell { background: #fee2e2; color: #dc2626; padding: 2px 8px; border-radius: 4px; font-size: .72rem; font-weight: 700; }
+    .trade-table th { font-size: .7rem; text-transform: uppercase; letter-spacing: .05em; color: #888; font-weight: 600; }
+    .trade-table td { vertical-align: middle; font-size: .85rem; }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spin-ring { display: inline-block; width: 28px; height: 28px; border: 3px solid #e0e0e0; border-top-color: #000; border-radius: 50%; animation: spin .7s linear infinite; }
+    .spinner-sm { display: inline-block; width: 14px; height: 14px; border: 2px solid #ddd; border-top-color: #555; border-radius: 50%; animation: spin .7s linear infinite; vertical-align: middle; margin-right: 6px; }
+  </style>
+</head>
+<body>
+
+<nav class="navbar navbar-dark">
+  <div class="d-flex align-items-center gap-4">
+    <a class="navbar-brand fw-bold" href="/"><span class="dot-alive"></span>CoinGecko API Manager</a>
+    <div class="d-flex gap-1">
+      <a href="/" class="nav-pill">Dashboard</a>
+      <a href="/search" class="nav-pill">Search</a>
+      <a href="/backtest" class="nav-pill active">Backtest</a>
+    </div>
+  </div>
+</nav>
+
+<div class="container-fluid py-4 px-4">
+  <h5 class="fw-bold mb-4">Backtest Strategy</h5>
+
+  <!-- Settings -->
+  <div class="card rounded-3 mb-4">
+    <div class="section-header">
+      <span class="section-title">Settings</span>
+      <span id="form-status" style="font-size:.78rem;color:#aaa"></span>
+    </div>
+    <div class="p-4">
+      <div class="row g-3 align-items-end">
+        <div class="col-md-4">
+          <label class="form-label">Coin</label>
+          <div class="ac-wrap">
+            <input type="text" id="coin-name-input" class="form-control" placeholder="Search coin… (e.g. Bitcoin)" autocomplete="off">
+            <input type="hidden" id="coin-id-input" value="">
+            <div class="ac-dropdown" id="ac-dropdown"></div>
+          </div>
+        </div>
+        <div class="col-md-2">
+          <label class="form-label">Period</label>
+          <select id="days-input" class="form-select">
+            <option value="30">30 days</option>
+            <option value="90" selected>90 days</option>
+            <option value="180">180 days</option>
+            <option value="365">1 year</option>
+          </select>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">Strategy</label>
+          <select id="strategy-input" class="form-select">
+            <option value="hold">Buy &amp; Hold</option>
+            <option value="sma">SMA Crossover (7d / 21d)</option>
+            <option value="rsi">RSI (14) — buy &lt;30 / sell &gt;70</option>
+          </select>
+        </div>
+        <div class="col-md-2">
+          <label class="form-label">Initial Capital (USD)</label>
+          <input type="number" id="capital-input" class="form-control" value="10000" min="100" step="100">
+        </div>
+        <div class="col-md-1">
+          <button id="run-btn" class="btn btn-dark w-100 fw-semibold" onclick="runBacktest()">Run</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Loading -->
+  <div id="loading-box" style="display:none" class="text-center py-5">
+    <div class="spin-ring"></div>
+    <div class="mt-3" style="color:#888;font-size:.9rem">Fetching historical data &amp; running backtest…</div>
+  </div>
+
+  <!-- Error -->
+  <div id="error-box" style="display:none" class="alert alert-danger border-0 rounded-3" role="alert"></div>
+
+  <!-- Results -->
+  <div id="results-section" style="display:none">
+    <!-- Primary metrics -->
+    <div class="row g-3 mb-3">
+      <div class="col-6 col-md-3">
+        <div class="stat-card">
+          <div class="s-label">Initial Capital</div>
+          <div class="s-value sm" id="r-initial">—</div>
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="stat-card">
+          <div class="s-label">Final Value</div>
+          <div class="s-value sm" id="r-final">—</div>
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="stat-card">
+          <div class="s-label">Strategy Return</div>
+          <div class="s-value" id="r-return">—</div>
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="stat-card">
+          <div class="s-label">Buy &amp; Hold Return</div>
+          <div class="s-value" id="r-benchmark">—</div>
+        </div>
+      </div>
+    </div>
+    <!-- Secondary metrics -->
+    <div class="row g-3 mb-4">
+      <div class="col-6 col-md-3">
+        <div class="stat-card">
+          <div class="s-label">Alpha vs Buy &amp; Hold</div>
+          <div class="s-value" id="r-alpha">—</div>
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="stat-card">
+          <div class="s-label">Trades Executed</div>
+          <div class="s-value" id="r-trades">—</div>
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="stat-card">
+          <div class="s-label">Strategy</div>
+          <div class="s-value sm" id="r-strategy-name">—</div>
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="stat-card">
+          <div class="s-label">Period</div>
+          <div class="s-value sm" id="r-period">—</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Price chart -->
+    <div class="card rounded-3 mb-4">
+      <div class="section-header">
+        <span class="section-title" id="chart-title">Price &amp; Signals</span>
+        <span style="font-size:.75rem;color:#aaa" id="chart-meta"></span>
+      </div>
+      <div class="p-3" style="position:relative">
+        <canvas id="price-chart"></canvas>
+      </div>
+    </div>
+
+    <!-- RSI chart (only for RSI strategy) -->
+    <div class="card rounded-3 mb-4" id="rsi-card" style="display:none">
+      <div class="section-header">
+        <span class="section-title">RSI (14)</span>
+        <span style="font-size:.75rem;color:#aaa">Buy zone &lt;30 &nbsp;·&nbsp; Sell zone &gt;70</span>
+      </div>
+      <div class="p-3">
+        <canvas id="rsi-chart" height="110"></canvas>
+      </div>
+    </div>
+
+    <!-- Trade signals table -->
+    <div class="card rounded-3" id="trades-card" style="display:none">
+      <div class="section-header">
+        <span class="section-title">Trade Signals</span>
+        <span style="font-size:.75rem;color:#aaa" id="trades-subtitle"></span>
+      </div>
+      <div id="trades-table-wrap" class="px-1 pb-2"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+let _priceChart = null, _rsiChart = null, _acTimer = null;
+
+// ── URL pre-fill ──────────────────────────────────────────────────────────────
+(function () {
+  const p = new URLSearchParams(location.search);
+  const coin = p.get("coin"), name = p.get("name");
+  if (coin) {
+    document.getElementById("coin-id-input").value = coin;
+    document.getElementById("coin-name-input").value = name || coin;
+  }
+  if (p.get("days"))     document.getElementById("days-input").value     = p.get("days");
+  if (p.get("strategy")) document.getElementById("strategy-input").value = p.get("strategy");
+  if (coin) setTimeout(runBacktest, 200);
+})();
+
+// ── Autocomplete ──────────────────────────────────────────────────────────────
+const nameInput = document.getElementById("coin-name-input");
+const idInput   = document.getElementById("coin-id-input");
+const dropdown  = document.getElementById("ac-dropdown");
+
+nameInput.addEventListener("input", function () {
+  idInput.value = "";
+  const q = this.value.trim();
+  clearTimeout(_acTimer);
+  if (q.length < 2) { closeDropdown(); return; }
+  _acTimer = setTimeout(() => fetchSuggestions(q), 280);
+});
+
+nameInput.addEventListener("keydown", function (e) {
+  const items = dropdown.querySelectorAll(".ac-item");
+  const hi = dropdown.querySelector(".highlighted");
+  if (e.key === "Escape") { closeDropdown(); return; }
+  if (!items.length) return;
+  if (e.key === "ArrowDown") {
+    e.preventDefault();
+    const next = hi ? hi.nextElementSibling : items[0];
+    if (next) { hi && hi.classList.remove("highlighted"); next.classList.add("highlighted"); }
+  } else if (e.key === "ArrowUp") {
+    e.preventDefault();
+    const prev = hi ? hi.previousElementSibling : items[items.length - 1];
+    if (prev) { hi && hi.classList.remove("highlighted"); prev.classList.add("highlighted"); }
+  } else if (e.key === "Enter") {
+    if (hi) { e.preventDefault(); hi.click(); }
+  }
+});
+
+document.addEventListener("click", function (e) {
+  if (!nameInput.contains(e.target) && !dropdown.contains(e.target)) closeDropdown();
+});
+
+async function fetchSuggestions(q) {
+  try {
+    const r = await fetch("/api/search?q=" + encodeURIComponent(q));
+    const d = await r.json();
+    if (d.error || !d.coins?.length) { closeDropdown(); return; }
+    renderDropdown(d.coins.slice(0, 7));
+  } catch { closeDropdown(); }
+}
+
+function renderDropdown(coins) {
+  dropdown.innerHTML = coins.map(c => `
+    <div class="ac-item" data-id="${c.id}" data-name="${escHtml(c.name)}">
+      ${c.thumb ? `<img src="${c.thumb}" alt="">` : `<div class="ac-img-ph">?</div>`}
+      <span class="ac-name">${escHtml(c.name)}</span>
+      <span class="ac-sym">${escHtml(c.symbol.toUpperCase())}</span>
+      ${c.market_cap_rank ? `<span class="ac-rank">#${c.market_cap_rank}</span>` : ""}
+    </div>`).join("");
+  dropdown.querySelectorAll(".ac-item").forEach(el => {
+    el.addEventListener("click", () => {
+      idInput.value   = el.dataset.id;
+      nameInput.value = el.dataset.name;
+      closeDropdown();
+    });
+  });
+  dropdown.style.display = "block";
+}
+
+function closeDropdown() { dropdown.style.display = "none"; dropdown.innerHTML = ""; }
+
+// ── Backtest ──────────────────────────────────────────────────────────────────
+async function runBacktest() {
+  let coinId = idInput.value.trim() || nameInput.value.trim().toLowerCase().replace(/\s+/g, "-");
+  if (!coinId) {
+    setFormStatus("Enter a coin name first."); return;
+  }
+  const days     = document.getElementById("days-input").value;
+  const strategy = document.getElementById("strategy-input").value;
+  const capital  = document.getElementById("capital-input").value || "10000";
+
+  setFormStatus("");
+  showSection("loading");
+  const btn = document.getElementById("run-btn");
+  btn.disabled = true; btn.textContent = "Running…";
+
+  try {
+    const url = `/api/backtest?coin=${encodeURIComponent(coinId)}&days=${days}&strategy=${strategy}&capital=${capital}`;
+    const r = await fetch(url);
+    const data = await r.json();
+    if (data.error) {
+      showSection("error");
+      document.getElementById("error-box").textContent = "⚠ " + data.error;
+      return;
+    }
+    renderResults(data, coinId, days, strategy);
+  } catch (e) {
+    showSection("error");
+    document.getElementById("error-box").textContent = "⚠ Request failed: " + e.message;
+  } finally {
+    btn.disabled = false; btn.textContent = "Run";
+  }
+}
+
+function renderResults(data, coinId, days, strategy) {
+  const pct  = v => (v >= 0 ? "+" : "") + v.toFixed(2) + "%";
+  const usd  = v => "$" + v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const cls  = v => v >= 0 ? "pos" : "neg";
+  const alpha = +(data.return_pct - data.benchmark_return).toFixed(2);
+
+  setText("r-initial",       usd(data.initial));
+  setText("r-final",         usd(data.final));
+  setColorVal("r-return",    pct(data.return_pct),   data.return_pct);
+  setColorVal("r-benchmark", pct(data.benchmark_return), data.benchmark_return);
+  setColorVal("r-alpha",     (alpha >= 0 ? "+" : "") + alpha.toFixed(2) + "%", alpha);
+  setText("r-trades",        data.trades);
+  setText("r-strategy-name", data.strategy_name);
+  setText("r-period",        `${data.days} days · ${data.prices.length} data pts`);
+  setText("chart-title",     `${coinId.charAt(0).toUpperCase() + coinId.slice(1)} — Price & Signals`);
+  setText("chart-meta",      data.strategy_name);
+
+  buildPriceChart(data);
+
+  if (strategy === "rsi" && data.rsi) {
+    document.getElementById("rsi-card").style.display = "";
+    buildRsiChart(data);
+  } else {
+    document.getElementById("rsi-card").style.display = "none";
+    if (_rsiChart) { _rsiChart.destroy(); _rsiChart = null; }
+  }
+
+  buildTradeTable(data);
+  showSection("results");
+}
+
+// ── Charts ────────────────────────────────────────────────────────────────────
+function buildPriceChart(data) {
+  if (_priceChart) { _priceChart.destroy(); _priceChart = null; }
+  const ctx = document.getElementById("price-chart").getContext("2d");
+
+  const prices = data.prices;
+  const tsToIdx = new Map(prices.map(([ts], i) => [ts, i]));
+  const labels  = prices.map(([ts]) => fmtDate(ts));
+  const priceY  = prices.map(([, p]) => p);
+
+  // Buy / Sell point arrays (null everywhere except signal positions)
+  const buyY  = Array(prices.length).fill(null);
+  const sellY = Array(prices.length).fill(null);
+  (data.trade_signals || []).forEach(s => {
+    const i = tsToIdx.get(s.ts);
+    if (i !== undefined) (s.type === "buy" ? buyY : sellY)[i] = s.price;
+  });
+
+  const datasets = [
+    {
+      label: "Price",
+      data: priceY,
+      borderColor: "#0a0a0a",
+      borderWidth: 1.5,
+      pointRadius: 0,
+      tension: 0.2,
+      fill: false,
+      order: 3,
+    },
+    {
+      label: "Buy ▲",
+      data: buyY,
+      type: "scatter",
+      backgroundColor: "#16a34a",
+      pointRadius: 7,
+      pointHoverRadius: 9,
+      pointStyle: "triangle",
+      order: 1,
+    },
+    {
+      label: "Sell ▼",
+      data: sellY,
+      type: "scatter",
+      backgroundColor: "#dc2626",
+      pointRadius: 7,
+      pointHoverRadius: 9,
+      pointStyle: "triangle",
+      rotation: 180,
+      order: 1,
+    },
+  ];
+
+  // SMA overlay
+  if (data.sma_short) {
+    const shortY = Array(prices.length).fill(null);
+    const longY  = Array(prices.length).fill(null);
+    data.sma_short.forEach(([ts, v]) => { const i = tsToIdx.get(ts); if (i !== undefined) shortY[i] = v; });
+    data.sma_long .forEach(([ts, v]) => { const i = tsToIdx.get(ts); if (i !== undefined) longY[i]  = v; });
+    datasets.push(
+      { label: "SMA 7d",  data: shortY, borderColor: "#6366f1", borderWidth: 1.5, borderDash: [5, 4], pointRadius: 0, tension: 0.2, fill: false, order: 2 },
+      { label: "SMA 21d", data: longY,  borderColor: "#f59e0b", borderWidth: 1.5, borderDash: [5, 4], pointRadius: 0, tension: 0.2, fill: false, order: 2 }
+    );
+  }
+
+  _priceChart = new Chart(ctx, {
+    type: "line",
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: { position: "top", labels: { font: { size: 11 }, boxWidth: 12, padding: 12 } },
+        tooltip: {
+          callbacks: {
+            label: ctx => ctx.raw == null ? null : `${ctx.dataset.label}: $${(+ctx.raw).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+          },
+        },
+      },
+      scales: {
+        x: {
+          grid: { color: "#f0f0f0" },
+          ticks: { maxTicksLimit: 10, font: { size: 11 }, color: "#888", maxRotation: 0 },
+        },
+        y: {
+          grid: { color: "#f0f0f0" },
+          ticks: {
+            font: { size: 11 }, color: "#888",
+            callback: v => v >= 1000 ? "$" + (v / 1000).toFixed(0) + "K" : "$" + (+v).toLocaleString(undefined, { maximumFractionDigits: 2 }),
+          },
+        },
+      },
+    },
+  });
+}
+
+function buildRsiChart(data) {
+  if (_rsiChart) { _rsiChart.destroy(); _rsiChart = null; }
+  const ctx = document.getElementById("rsi-chart").getContext("2d");
+  const prices = data.prices;
+  const tsToIdx = new Map(prices.map(([ts], i) => [ts, i]));
+  const labels  = prices.map(([ts]) => fmtDate(ts));
+  const rsiY    = Array(prices.length).fill(null);
+  data.rsi.forEach(([ts, v]) => { const i = tsToIdx.get(ts); if (i !== undefined) rsiY[i] = v; });
+
+  _rsiChart = new Chart(ctx, {
+    type: "line",
+    data: {
+      labels,
+      datasets: [
+        { label: "RSI (14)", data: rsiY, borderColor: "#8b5cf6", borderWidth: 1.5, pointRadius: 0, fill: false, tension: 0.2 },
+        { label: "Overbought 70", data: Array(prices.length).fill(70), borderColor: "#dc2626", borderWidth: 1, borderDash: [4, 4], pointRadius: 0, fill: false },
+        { label: "Oversold 30",   data: Array(prices.length).fill(30), borderColor: "#16a34a", borderWidth: 1, borderDash: [4, 4], pointRadius: 0, fill: false },
+      ],
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { grid: { color: "#f0f0f0" }, ticks: { maxTicksLimit: 10, font: { size: 10 }, color: "#888", maxRotation: 0 } },
+        y: { min: 0, max: 100, grid: { color: "#f0f0f0" }, ticks: { font: { size: 10 }, color: "#888", stepSize: 20 } },
+      },
+    },
+  });
+}
+
+// ── Trade table ───────────────────────────────────────────────────────────────
+function buildTradeTable(data) {
+  const signals = (data.trade_signals || []).filter(s => s.type === "buy" || s.type === "sell");
+  const card  = document.getElementById("trades-card");
+  const wrap  = document.getElementById("trades-table-wrap");
+  const subEl = document.getElementById("trades-subtitle");
+  if (!signals.length) { card.style.display = "none"; return; }
+  card.style.display = "";
+  subEl.textContent  = signals.length + " signal" + (signals.length !== 1 ? "s" : "");
+  const rows = signals.map(s => `
+    <tr>
+      <td class="ps-4"><span class="${s.type === "buy" ? "badge-buy" : "badge-sell"}">${s.type.toUpperCase()}</span></td>
+      <td>${fmtDateLong(s.ts)}</td>
+      <td style="font-weight:700">$${(+s.price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+    </tr>`).join("");
+  wrap.innerHTML = `
+    <table class="table trade-table mb-0">
+      <thead><tr>
+        <th class="ps-4">Action</th><th>Date</th><th>Price (USD)</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function fmtDate(ts) {
+  return new Date(ts).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+function fmtDateLong(ts) {
+  return new Date(ts).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
+}
+function setText(id, val) { document.getElementById(id).textContent = val; }
+function setColorVal(id, text, num) {
+  const el = document.getElementById(id);
+  el.textContent = text;
+  el.className = "s-value" + (num > 0 ? " pos" : num < 0 ? " neg" : "");
+}
+function setFormStatus(msg) { document.getElementById("form-status").textContent = msg; }
+function showSection(name) {
+  document.getElementById("loading-box").style.display  = name === "loading"  ? "" : "none";
+  document.getElementById("error-box").style.display    = name === "error"    ? "" : "none";
+  document.getElementById("results-section").style.display = name === "results" ? "" : "none";
+}
+function escHtml(s) {
+  return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+</script>
+</body>
+</html>

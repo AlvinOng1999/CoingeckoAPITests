@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Search — CoinGecko API Manager</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body { background: #fff; color: #0a0a0a; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
+    .dot-alive { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #000; margin-right: 8px; }
+    .navbar { background: #000 !important; border-bottom: 1px solid #111; padding: 14px 28px; }
+    .navbar-brand { color: #fff !important; font-size: 1rem; letter-spacing: .01em; text-decoration: none; }
+    .nav-pill { color: #777; font-size: .85rem; text-decoration: none; padding: 5px 12px; border-radius: 6px; transition: color .15s, background .15s; }
+    .nav-pill:hover { color: #fff; background: #222; }
+    .nav-pill.active { color: #fff; }
+
+    .search-wrap { max-width: 620px; margin: 56px auto 36px; padding: 0 20px; }
+    .page-title { font-size: 1.75rem; font-weight: 800; text-align: center; margin-bottom: 28px; }
+    .search-box { position: relative; }
+    .search-box input {
+      width: 100%; padding: 14px 20px 14px 48px; font-size: 1rem;
+      border: 1.5px solid #e0e0e0; border-radius: 12px;
+      outline: none; background: #fff; color: #0a0a0a;
+      transition: border-color .15s, box-shadow .15s;
+    }
+    .search-box input:focus { border-color: #000; box-shadow: 0 0 0 3px rgba(0,0,0,.06); }
+    .search-icon { position: absolute; left: 16px; top: 50%; transform: translateY(-50%); color: #aaa; pointer-events: none; }
+    .search-status { min-height: 22px; margin-top: 10px; text-align: center; font-size: .82rem; color: #aaa; }
+
+    .results-wrap { max-width: 1100px; margin: 0 auto; padding: 0 20px 60px; }
+    .section-label { font-size: .72rem; font-weight: 700; color: #888; text-transform: uppercase; letter-spacing: .06em; margin-bottom: 14px; }
+
+    .coin-card {
+      display: flex; align-items: center; gap: 14px;
+      background: #fff; border: 1px solid #e8e8e8; border-radius: 10px;
+      padding: 14px 16px; transition: border-color .15s, box-shadow .15s;
+    }
+    .coin-card:hover { border-color: #000; box-shadow: 0 2px 10px rgba(0,0,0,.06); }
+    .coin-card img { width: 34px; height: 34px; border-radius: 50%; border: 1px solid #ebebeb; flex-shrink: 0; object-fit: cover; }
+    .coin-img-ph { width: 34px; height: 34px; border-radius: 50%; background: #f4f4f4; border: 1px solid #ebebeb; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: .68rem; color: #bbb; }
+    .coin-info { flex: 1; min-width: 0; }
+    .coin-name { font-weight: 700; font-size: .9rem; color: #0a0a0a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .coin-sym  { font-size: .74rem; color: #888; margin-top: 1px; }
+    .coin-rank { font-size: .7rem; color: #aaa; background: #f4f4f4; border: 1px solid #ebebeb; border-radius: 4px; padding: 2px 7px; flex-shrink: 0; white-space: nowrap; }
+    .btn-bt { font-size: .78rem; padding: 5px 13px; border-radius: 7px; border: 1px solid #e0e0e0; background: #fff; color: #0a0a0a; cursor: pointer; transition: background .15s, border-color .15s; text-decoration: none; flex-shrink: 0; }
+    .btn-bt:hover { background: #000; color: #fff; border-color: #000; }
+
+    .empty { text-align: center; padding: 72px 0; color: #ccc; }
+    .empty-icon { font-size: 2.8rem; margin-bottom: 14px; }
+    .empty-text { font-size: .9rem; }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #ddd; border-top-color: #555; border-radius: 50%; animation: spin .7s linear infinite; vertical-align: middle; margin-right: 6px; }
+  </style>
+</head>
+<body>
+
+<nav class="navbar navbar-dark">
+  <div class="d-flex align-items-center gap-4">
+    <a class="navbar-brand fw-bold" href="/"><span class="dot-alive"></span>CoinGecko API Manager</a>
+    <div class="d-flex gap-1">
+      <a href="/" class="nav-pill">Dashboard</a>
+      <a href="/search" class="nav-pill active">Search</a>
+      <a href="/backtest" class="nav-pill">Backtest</a>
+    </div>
+  </div>
+</nav>
+
+<div class="search-wrap">
+  <div class="page-title">Search Coins</div>
+  <div class="search-box">
+    <span class="search-icon">🔍</span>
+    <input type="text" id="q" placeholder="Search by name or symbol…" autocomplete="off" autofocus>
+  </div>
+  <div class="search-status" id="status"></div>
+</div>
+
+<div class="results-wrap">
+  <div id="results">
+    <div class="empty">
+      <div class="empty-icon">🔍</div>
+      <div class="empty-text">Type a coin name or symbol to search</div>
+    </div>
+  </div>
+</div>
+
+<script>
+let timer, lastQ = "";
+
+document.getElementById("q").addEventListener("input", function () {
+  const q = this.value.trim();
+  clearTimeout(timer);
+  if (!q) { reset(); return; }
+  timer = setTimeout(() => search(q), 350);
+});
+
+function reset() {
+  document.getElementById("status").textContent = "";
+  document.getElementById("results").innerHTML =
+    `<div class="empty"><div class="empty-icon">🔍</div><div class="empty-text">Type a coin name or symbol to search</div></div>`;
+  lastQ = "";
+}
+
+async function search(q) {
+  if (q === lastQ) return;
+  lastQ = q;
+  const st = document.getElementById("status");
+  st.innerHTML = '<span class="spinner"></span>Searching…';
+  try {
+    const r = await fetch("/api/search?q=" + encodeURIComponent(q));
+    const d = await r.json();
+    st.textContent = "";
+    if (d.error) {
+      st.textContent = d.error === "rate_limited" ? "⚠ Rate limited — try again shortly" : "⚠ " + d.error;
+      return;
+    }
+    render(d);
+  } catch { st.textContent = "⚠ Request failed"; }
+}
+
+function render(data) {
+  const coins = (data.coins || []).slice(0, 24);
+  const el = document.getElementById("results");
+  if (!coins.length) {
+    el.innerHTML = `<div class="empty"><div class="empty-icon">😕</div><div class="empty-text">No results found</div></div>`;
+    return;
+  }
+  const total = data.coins.length;
+  const cards = coins.map(c => `
+    <div class="col-sm-6 col-lg-4 col-xl-3">
+      <div class="coin-card">
+        ${c.thumb
+          ? `<img src="${c.thumb}" alt="${escHtml(c.name)}">`
+          : `<div class="coin-img-ph">?</div>`}
+        <div class="coin-info">
+          <div class="coin-name" title="${escHtml(c.name)}">${escHtml(c.name)}</div>
+          <div class="coin-sym">${escHtml(c.symbol.toUpperCase())}</div>
+        </div>
+        ${c.market_cap_rank ? `<span class="coin-rank">#${c.market_cap_rank}</span>` : ""}
+        <a href="/backtest?coin=${encodeURIComponent(c.id)}&name=${encodeURIComponent(c.name)}"
+           class="btn-bt">Backtest →</a>
+      </div>
+    </div>`).join("");
+  el.innerHTML = `
+    <div class="section-label">${total} result${total !== 1 ? "s" : ""}${total > 24 ? " · showing top 24" : ""}</div>
+    <div class="row g-3">${cards}</div>`;
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+</script>
+</body>
+</html>

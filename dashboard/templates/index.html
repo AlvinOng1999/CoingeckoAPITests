@@ -1,0 +1,1068 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CoinGecko API Manager</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    body {
+      background: #ffffff;
+      color: #0a0a0a;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    }
+
+    /* Navbar */
+    .navbar {
+      background: #000000 !important;
+      border-bottom: 1px solid #000;
+      padding: 14px 28px;
+    }
+    .navbar-brand { color: #ffffff !important; font-size: 1rem; letter-spacing: .01em; }
+    .navbar .btn-outline-secondary {
+      color: #ccc; border-color: #444;
+    }
+    .navbar .btn-outline-secondary:hover { background: #222; color: #fff; border-color: #555; }
+    .navbar .btn-outline-success {
+      color: #fff; border-color: #fff;
+    }
+    .navbar .btn-outline-success:hover { background: #fff; color: #000; }
+    .navbar .btn-outline-warning {
+      color: #ccc; border-color: #666;
+    }
+    .navbar .btn-outline-warning:hover { background: #333; color: #fff; border-color: #888; }
+
+    /* Cards */
+    .card {
+      background: #ffffff;
+      border: 1px solid #e8e8e8;
+      box-shadow: 0 1px 4px rgba(0,0,0,.05);
+    }
+
+    /* Stats cards */
+    .stat-card {
+      background: #fff;
+      border: 1px solid #e8e8e8;
+      border-radius: 10px;
+      padding: 20px 18px;
+      text-align: center;
+      transition: border-color .15s, box-shadow .15s;
+    }
+    .stat-card:hover {
+      border-color: #000;
+      box-shadow: 0 3px 12px rgba(0,0,0,.08);
+    }
+    .stat-card .label { font-size: .78rem; color: #888; text-transform: uppercase; letter-spacing: .06em; margin-bottom: 6px; }
+    .stat-card .value { font-size: 2rem; font-weight: 700; color: #0a0a0a; line-height: 1.1; }
+    .stat-card .value.sm { font-size: 1.2rem; }
+
+    /* Global stat tiles */
+    .global-stat {
+      background: #fafafa;
+      border: 1px solid #e8e8e8;
+      border-radius: 8px;
+      padding: 12px 16px;
+      transition: border-color .15s;
+    }
+    .global-stat:hover { border-color: #000; }
+    .global-stat .g-label { font-size: .72rem; color: #888; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 4px; }
+    .global-stat .g-value { font-size: 1.05rem; font-weight: 700; color: #0a0a0a; }
+    .global-stat .g-sub { font-size: .78rem; color: #555; margin-top: 2px; }
+
+    /* Coin cards */
+    .coin-card {
+      background: #fafafa;
+      border: 1px solid #e8e8e8;
+      border-radius: 10px;
+      padding: 18px 12px;
+      text-align: center;
+      transition: border-color .15s, box-shadow .15s;
+      cursor: default;
+    }
+    .coin-card:hover {
+      border-color: #000;
+      box-shadow: 0 4px 16px rgba(0,0,0,.08);
+    }
+    .coin-icon { font-size: 1.5rem; margin-bottom: 6px; }
+    .coin-symbol { font-weight: 700; font-size: .9rem; color: #0a0a0a; }
+    .coin-name { font-size: .75rem; color: #888; margin-bottom: 8px; }
+    .coin-price { font-size: 1.05rem; font-weight: 700; color: #0a0a0a; }
+    .coin-change { font-size: .78rem; margin-top: 4px; }
+    .coin-mcap { font-size: .72rem; color: #999; margin-top: 3px; }
+
+    /* Change colors — minimal: up=black bold, down=gray */
+    .ch-up   { color: #0a0a0a; font-weight: 600; }
+    .ch-down { color: #888; }
+    .ch-flat { color: #aaa; }
+
+    /* Table */
+    .table {
+      --bs-table-bg: transparent;
+      --bs-table-color: #0a0a0a;
+      --bs-table-border-color: #ebebeb;
+      --bs-table-hover-bg: #f7f7f7;
+    }
+    .table thead th {
+      color: #888;
+      font-size: .72rem;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      font-weight: 600;
+      border-bottom: 1px solid #e0e0e0;
+      padding-top: 14px;
+      padding-bottom: 14px;
+    }
+    .table tbody td { padding-top: 12px; padding-bottom: 12px; vertical-align: middle; }
+    .table tbody tr:hover { background: #f7f7f7 !important; }
+
+    /* Active / pinned rows */
+    tr.active-row { background: #f5f5f5 !important; border-left: 3px solid #000; }
+    tr.pinned-row { background: #f0f0f0 !important; border-left: 3px solid #555; }
+
+    /* Badges */
+    .badge-status {
+      font-size: .64rem;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 20px;
+      letter-spacing: .04em;
+      vertical-align: middle;
+    }
+    .badge-active { background: #000; color: #fff; }
+    .badge-pinned { background: #444; color: #fff; }
+
+    /* API key badge */
+    .badge-key {
+      font-family: "SF Mono", "Fira Code", monospace;
+      font-size: .78rem;
+      cursor: pointer;
+      background: #f4f4f4;
+      color: #0a0a0a;
+      padding: 4px 10px;
+      border-radius: 6px;
+      border: 1px solid #e0e0e0;
+      user-select: all;
+      transition: background .15s, border-color .15s;
+    }
+    .badge-key:hover { background: #ebebeb; border-color: #bbb; }
+
+    /* Progress bar */
+    .progress { height: 5px; background: #ebebeb; border-radius: 99px; }
+    .progress-bar { background: #000 !important; border-radius: 99px; }
+    .progress-bar.warn { background: #555 !important; }
+    .progress-bar.danger { background: #222 !important; }
+
+    /* Trending */
+    .trending-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 12px;
+      border-radius: 8px;
+      border: 1px solid #ebebeb;
+      margin-bottom: 6px;
+      background: #fafafa;
+      transition: border-color .15s, background .15s;
+    }
+    .trending-item:hover { border-color: #000; background: #f4f4f4; }
+
+    /* Sparkline canvas */
+    canvas.sparkline { display: block; }
+
+    /* Section header */
+    .section-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 16px 20px 12px;
+      border-bottom: 1px solid #ebebeb;
+    }
+    .section-title { font-size: .9rem; font-weight: 700; color: #0a0a0a; letter-spacing: .01em; }
+
+    /* Buttons — action buttons in table */
+    .btn-action {
+      font-size: .78rem;
+      padding: 4px 10px;
+      border-radius: 6px;
+      border: 1px solid #d0d0d0;
+      background: #fff;
+      color: #0a0a0a;
+      cursor: pointer;
+      transition: background .15s, border-color .15s;
+      white-space: nowrap;
+    }
+    .btn-action:hover { background: #000; color: #fff; border-color: #000; }
+    .btn-action.pin-btn { border-color: #aaa; color: #444; }
+    .btn-action.pin-btn:hover { background: #000; color: #fff; border-color: #000; }
+    .btn-action.unpin-btn { border-color: #555; color: #333; background: #f4f4f4; }
+    .btn-action.unpin-btn:hover { background: #000; color: #fff; border-color: #000; }
+    .btn-action.del-btn { border-color: #e0e0e0; color: #bbb; }
+    .btn-action.del-btn:hover { background: #c0392b; color: #fff; border-color: #c0392b; }
+
+    /* Pagination */
+    .keys-pagination { display:flex; gap:4px; align-items:center; justify-content:flex-end; padding:10px 16px 8px; }
+    .keys-pagination button {
+      font-size:.78rem; padding:3px 9px; border-radius:5px;
+      border:1px solid #d0d0d0; background:#fff; color:#444; cursor:pointer;
+      transition: background .12s;
+    }
+    .keys-pagination button:hover { background:#000; color:#fff; border-color:#000; }
+    .keys-pagination button.active { background:#000; color:#fff; border-color:#000; font-weight:700; }
+    .keys-pagination button:disabled { opacity:.35; cursor:default; }
+    .keys-pagination .pg-info { font-size:.75rem; color:#aaa; margin:0 4px; }
+
+    /* Rate limit warning */
+    .rate-warn { color: #555; font-weight: 600; }
+
+    /* Toast */
+    #toast-box { position: fixed; bottom: 24px; right: 24px; z-index: 9999; min-width: 280px; }
+    #toast {
+      background: #000;
+      color: #fff;
+      border-radius: 8px;
+      padding: 12px 16px;
+      font-size: .875rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      box-shadow: 0 8px 24px rgba(0,0,0,.18);
+    }
+    #toast .btn-close-white { filter: invert(0); opacity: .6; }
+    #toast .btn-close-white:hover { opacity: 1; }
+
+    /* Markets table coin image */
+    .markets-img { border-radius: 50%; border: 1px solid #e8e8e8; }
+
+    /* Nav pills */
+    .navbar .nav-pill { color: #777; font-size: .85rem; text-decoration: none; padding: 5px 12px; border-radius: 6px; transition: color .15s, background .15s; }
+    .navbar .nav-pill:hover { color: #fff; background: #222; }
+    .navbar .nav-pill.active { color: #fff; }
+
+    /* Dot indicator */
+    .dot-alive { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #000; margin-right: 8px; }
+  </style>
+</head>
+<body>
+
+<nav class="navbar navbar-dark px-0" style="padding-left:28px!important;padding-right:28px!important">
+  <div class="d-flex align-items-center gap-4">
+    <span class="navbar-brand fw-bold">
+      <span class="dot-alive"></span>CoinGecko API Manager
+    </span>
+    <div class="d-flex gap-1">
+      <a href="/" class="nav-pill active">Dashboard</a>
+      <a href="/search" class="nav-pill">Search</a>
+      <a href="/backtest" class="nav-pill">Backtest</a>
+    </div>
+  </div>
+  <div class="d-flex gap-2 align-items-center">
+    {% if active_pinned %}
+    <form method="POST" action="/unpin" class="d-inline">
+      <button class="btn btn-sm btn-outline-warning" type="submit">⬡ Release Pin</button>
+    </form>
+    {% endif %}
+    <form method="POST" action="/refresh-all">
+      <button class="btn btn-sm btn-outline-secondary" type="submit">↻ Refresh Usage</button>
+    </form>
+    <form method="POST" action="/create" onsubmit="onCreateSubmit(this)">
+      <button class="btn btn-sm btn-outline-success" type="submit" id="create-btn">+ Generate Key</button>
+    </form>
+  </div>
+</nav>
+
+<div class="container-fluid py-4 px-4">
+
+  <!-- Stats Row -->
+  <div class="row mb-4 g-3">
+    <div class="col-md-3">
+      <div class="stat-card">
+        <div class="label">Total API Keys</div>
+        <div class="value" id="stat-total-keys">{{ accounts | length }}</div>
+      </div>
+    </div>
+    <div class="col-md-3">
+      <div class="stat-card">
+        <div class="label">Calls Remaining</div>
+        <div class="value" id="stat-calls-left">{{ "{:,}".format(accounts | sum(attribute='calls_left')) }}</div>
+      </div>
+    </div>
+    <div class="col-md-3">
+      <div class="stat-card">
+        <div class="label">Calls Used</div>
+        <div class="value" id="stat-calls-used">{{ "{:,}".format(accounts | sum(attribute='calls_used')) }}</div>
+      </div>
+    </div>
+    <div class="col-md-3">
+      <div class="stat-card">
+        <div class="label">Active Key</div>
+        <div class="value sm" id="stat-active-key">
+          {% if active_id %}
+            Key #{{ active_id }}
+            {% if active_pinned %}<span class="badge-status badge-pinned ms-1">PINNED</span>{% endif %}
+          {% else %}
+            <span style="color:#aaa">None</span>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Global Market -->
+  <div class="card rounded-3 mb-4">
+    <div class="section-header">
+      <span class="section-title">Global Market</span>
+      <div class="d-flex align-items-center gap-3">
+        <span style="font-size:.75rem;color:#aaa" id="global-updated"></span>
+        <button class="btn-action" onclick="loadGlobal()">↻ Refresh</button>
+      </div>
+    </div>
+    <div class="p-3">
+      <div class="row g-2" id="global-stats">
+        <div class="col-12 text-center py-3" style="color:#aaa;font-size:.85rem">Loading…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Live Prices + Trending -->
+  <div class="row g-3 mb-4">
+    <div class="col-xl-8">
+      <div class="card rounded-3 h-100">
+        <div class="section-header">
+          <span class="section-title">Live Prices</span>
+          <div class="d-flex align-items-center gap-3">
+            <span style="font-size:.75rem;color:#aaa" id="active-key-label"></span>
+            <span style="font-size:.75rem;color:#aaa" id="last-updated"></span>
+            <button class="btn-action" onclick="loadPrices()" id="price-refresh-btn">↻ Refresh</button>
+          </div>
+        </div>
+        <div class="p-3">
+          <div class="row g-3" id="price-cards">
+            <div class="col-12 text-center py-3" style="color:#aaa;font-size:.85rem">Loading…</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="col-xl-4">
+      <div class="card rounded-3 h-100">
+        <div class="section-header">
+          <span class="section-title">Trending</span>
+          <button class="btn-action" onclick="loadTrending()">↻ Refresh</button>
+        </div>
+        <div class="p-3">
+          <div id="trending-list">
+            <div class="text-center py-3" style="color:#aaa;font-size:.85rem">Loading…</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Top 10 Markets -->
+  <div class="card rounded-3 mb-4">
+    <div class="section-header">
+      <span class="section-title">Top 10 by Market Cap</span>
+      <div class="d-flex align-items-center gap-3">
+        <span style="font-size:.75rem;color:#aaa" id="markets-updated"></span>
+        <button class="btn-action" onclick="loadMarkets()">↻ Refresh</button>
+      </div>
+    </div>
+    <div id="markets-table-wrapper">
+      <div class="text-center py-4" style="color:#aaa;font-size:.85rem">Loading…</div>
+    </div>
+  </div>
+
+  <!-- API Keys -->
+  <div class="card rounded-3">
+    <div class="section-header">
+      <span class="section-title">API Keys</span>
+    </div>
+    <div>
+      <table class="table mb-0">
+        <thead>
+          <tr>
+            <th class="ps-4">#</th>
+            <th>Email</th>
+            <th>API Key</th>
+            <th>Used</th>
+            <th>Remaining</th>
+            <th>Usage</th>
+            <th>Created</th>
+            <th class="pe-4">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for acc in accounts %}
+          <tr class="{% if acc.is_pinned %}pinned-row{% elif acc.id == active_id %}active-row{% endif %}">
+            <td class="ps-4" style="color:#888;font-size:.85rem">
+              {{ loop.index }}
+              {% if acc.is_pinned %}
+                <span class="badge-status badge-pinned ms-1">PINNED</span>
+              {% elif acc.id == active_id %}
+                <span class="badge-status badge-active ms-1">ACTIVE</span>
+              {% endif %}
+            </td>
+            <td style="font-size:.85rem;color:#333">{{ acc.email }}</td>
+            <td>
+              <span class="badge-key" onclick="toggleKey(this)" data-full="{{ acc.api_key }}">
+                {{ acc.api_key[:12] }}••••
+              </span>
+            </td>
+            <td style="font-size:.9rem;font-weight:600" id="row-used-{{ acc.id }}">{{ "{:,}".format(acc.calls_used) }}</td>
+            <td style="font-size:.9rem;font-weight:600" id="row-left-{{ acc.id }}">
+              {{ "{:,}".format(acc.calls_left) }}
+            </td>
+            <td style="width:140px">
+              {% set pct = (acc.calls_used / 10000 * 100) | int %}
+              <div class="progress mb-1">
+                <div class="progress-bar{% if pct >= 80 %} danger{% elif pct >= 50 %} warn{% endif %}" id="row-bar-{{ acc.id }}" style="width:{{ pct }}%"></div>
+              </div>
+              <small style="color:#aaa;font-size:.72rem" id="row-pct-{{ acc.id }}">{{ pct }}% used</small>
+            </td>
+            <td style="font-size:.8rem;color:#aaa">{{ acc.created_at[:16] }}</td>
+            <td class="pe-4">
+              <div class="d-flex gap-1 flex-wrap">
+                <form method="POST" action="/refresh/{{ acc.api_key }}" class="d-inline">
+                  <button class="btn-action" type="submit" title="Refresh usage">↻</button>
+                </form>
+                {% if acc.is_pinned %}
+                <form method="POST" action="/unpin" class="d-inline">
+                  <button class="btn-action unpin-btn" type="submit">Unpin</button>
+                </form>
+                {% else %}
+                <form method="POST" action="/pin/{{ acc.id }}" class="d-inline">
+                  <button class="btn-action pin-btn" type="submit">Set Active</button>
+                </form>
+                {% endif %}
+                <form method="POST" action="/delete/{{ acc.id }}" class="d-inline"
+                      onsubmit="return confirm('Delete this API key? This cannot be undone.')">
+                  <button class="btn-action del-btn" type="submit" title="Delete">✕</button>
+                </form>
+              </div>
+            </td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="8" class="text-center py-5" style="color:#aaa">
+              No API keys yet — click <strong>+ Generate Key</strong> to start.
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <div class="keys-pagination" id="keys-pagination"></div>
+    </div>
+  </div>
+
+  <p style="color:#aaa;font-size:.78rem;margin-top:14px">
+    Key rotation uses the oldest key with remaining calls. Click <strong style="color:#555">Set Active</strong> to pin a specific key. Click <strong style="color:#555">Unpin</strong> to restore automatic rotation.
+  </p>
+
+  <!-- API Stress Test -->
+  <div class="card rounded-3 mt-4">
+    <div class="section-header">
+      <div>
+        <span class="section-title">API Stress Test</span>
+        <span style="font-size:.75rem;color:#aaa;margin-left:10px">Deliberately consume API calls — watch usage climb in real time</span>
+      </div>
+    </div>
+    <div class="p-4">
+
+      <!-- Controls -->
+      <div class="d-flex align-items-center gap-3 flex-wrap mb-4">
+        <div>
+          <div style="font-size:.72rem;color:#888;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Calls to make</div>
+          <select id="stress-n" style="border:1px solid #d0d0d0;border-radius:6px;padding:5px 10px;font-size:.85rem;background:#fff;color:#0a0a0a">
+            <option value="10">10 calls</option>
+            <option value="25">25 calls</option>
+            <option value="50" selected>50 calls</option>
+            <option value="100">100 calls</option>
+            <option value="200">200 calls</option>
+          </select>
+        </div>
+        <div style="margin-top:18px">
+          <button class="btn-action" id="stress-btn" onclick="runStressTest()" style="padding:6px 18px;font-size:.85rem">▶ Run Test</button>
+        </div>
+        <div style="margin-top:18px;font-size:.82rem;color:#888" id="stress-message"></div>
+      </div>
+
+      <!-- Progress bar (hidden until test starts) -->
+      <div id="stress-progress-wrap" style="display:none">
+        <div style="font-size:.72rem;color:#888;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">
+          Progress — <span id="stress-pct-txt">0%</span>
+        </div>
+        <div class="progress mb-4" style="height:8px">
+          <div class="progress-bar" id="stress-bar" style="width:0%;transition:width .25s linear"></div>
+        </div>
+
+        <!-- Live counters -->
+        <div class="row g-3">
+          <div class="col-6 col-md-2">
+            <div style="font-size:.68rem;color:#888;text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px">Calls Made</div>
+            <div style="font-size:1.6rem;font-weight:700;line-height:1" id="stress-done">0</div>
+          </div>
+          <div class="col-6 col-md-2">
+            <div style="font-size:.68rem;color:#888;text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px">Monthly Used</div>
+            <div style="font-size:1.6rem;font-weight:700;line-height:1" id="stress-used">—</div>
+          </div>
+          <div class="col-6 col-md-2">
+            <div style="font-size:.68rem;color:#888;text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px">Remaining</div>
+            <div style="font-size:1.6rem;font-weight:700;line-height:1" id="stress-left">—</div>
+          </div>
+          <div class="col-6 col-md-2">
+            <div style="font-size:.68rem;color:#888;text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px">Errors</div>
+            <div style="font-size:1.6rem;font-weight:700;line-height:1" id="stress-errors">0</div>
+          </div>
+          <div class="col-6 col-md-2">
+            <div style="font-size:.68rem;color:#888;text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px">Rate Limited</div>
+            <div style="font-size:1.6rem;font-weight:700;line-height:1" id="stress-rl">0</div>
+          </div>
+          <div class="col-6 col-md-2">
+            <div style="font-size:.68rem;color:#888;text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px">Last HTTP</div>
+            <div style="font-size:1.6rem;font-weight:700;line-height:1" id="stress-status">—</div>
+          </div>
+        </div>
+
+        <!-- Monthly usage bar -->
+        <div id="stress-quota-wrap" style="display:none;margin-top:24px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
+            <span style="font-size:.72rem;color:#888;text-transform:uppercase;letter-spacing:.05em">Monthly Quota</span>
+            <span style="font-size:.78rem;color:#555;font-weight:600" id="stress-quota-txt">0 / 10,000</span>
+          </div>
+          <div class="progress" style="height:6px">
+            <div class="progress-bar" id="stress-quota-bar" style="width:0%;transition:width .4s"></div>
+          </div>
+        </div>
+
+        <!-- Activity log (collapsible) -->
+        <div style="margin-top:20px;border-top:1px solid #ebebeb;padding-top:12px">
+          <div onclick="toggleStressLog()"
+               style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;user-select:none">
+            <span style="font-size:.72rem;color:#888;text-transform:uppercase;letter-spacing:.06em;font-weight:600">Activity Log</span>
+            <span id="stress-log-toggle"
+                  style="font-size:.72rem;color:#aaa;font-family:'SF Mono','Fira Code',monospace">▸ expand</span>
+          </div>
+          <div id="stress-log-wrap" style="display:none;margin-top:8px;max-height:220px;overflow-y:auto;
+               background:#fafafa;border:1px solid #ebebeb;border-radius:6px;padding:6px 10px">
+            <!-- header row -->
+            <div style="display:grid;grid-template-columns:36px 1fr 56px 54px;gap:8px;
+                 padding:0 2px 5px;border-bottom:1px solid #e0e0e0;margin-bottom:3px">
+              <span style="font-size:.66rem;color:#bbb;text-transform:uppercase">#</span>
+              <span style="font-size:.66rem;color:#bbb;text-transform:uppercase">Endpoint</span>
+              <span style="font-size:.66rem;color:#bbb;text-transform:uppercase;text-align:right">Status</span>
+              <span style="font-size:.66rem;color:#bbb;text-transform:uppercase;text-align:right">ms</span>
+            </div>
+            <div id="stress-log"></div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+</div>
+
+<!-- Toast -->
+<div id="toast-box">
+  <div id="toast" style="display:none">
+    <span id="toast-msg"></span>
+    <button class="btn-close btn-close-white" onclick="hideToast()" style="font-size:.8rem"></button>
+  </div>
+</div>
+
+<script>
+const COINS = {
+  bitcoin:     { symbol: "BTC", icon: "₿", name: "Bitcoin" },
+  ethereum:    { symbol: "ETH", icon: "Ξ", name: "Ethereum" },
+  solana:      { symbol: "SOL", icon: "◎", name: "Solana" },
+  binancecoin: { symbol: "BNB", icon: "◈", name: "BNB" },
+  ripple:      { symbol: "XRP", icon: "✕", name: "XRP" },
+  cardano:     { symbol: "ADA", icon: "₳", name: "Cardano" },
+};
+
+function fmtPrice(p) {
+  if (p == null) return "—";
+  return p >= 1
+    ? "$" + p.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    : "$" + p.toFixed(6);
+}
+
+function fmtChange(c) {
+  if (c == null) return { str: "—", cls: "ch-flat" };
+  const abs = Math.abs(c).toFixed(2);
+  return c > 0
+    ? { str: `▲ +${abs}%`, cls: "ch-up" }
+    : c < 0
+    ? { str: `▼ ${abs}%`, cls: "ch-down" }
+    : { str: `${abs}%`, cls: "ch-flat" };
+}
+
+function fmtBig(n) {
+  if (!n) return "—";
+  if (n >= 1e12) return "$" + (n / 1e12).toFixed(2) + "T";
+  if (n >= 1e9)  return "$" + (n / 1e9).toFixed(1) + "B";
+  if (n >= 1e6)  return "$" + (n / 1e6).toFixed(1) + "M";
+  return "$" + n.toLocaleString();
+}
+
+function drawSparkline(canvas, prices, positive) {
+  const ctx = canvas.getContext("2d");
+  const w = canvas.width, h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+  if (!prices || prices.length < 2) return;
+  const min = Math.min(...prices), max = Math.max(...prices);
+  const range = max - min || 1;
+  const pts = prices.map((p, i) => [
+    (i / (prices.length - 1)) * w,
+    h - ((p - min) / range) * (h - 4) - 2,
+  ]);
+  ctx.strokeStyle = positive ? "#0a0a0a" : "#bbb";
+  ctx.lineWidth = 1.5;
+  ctx.lineJoin = "round";
+  ctx.beginPath();
+  pts.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)));
+  ctx.stroke();
+}
+
+async function loadPrices() {
+  const btn = document.getElementById("price-refresh-btn");
+  btn.disabled = true;
+  btn.textContent = "Loading…";
+  const container = document.getElementById("price-cards");
+  try {
+    const resp = await fetch("/api/prices");
+    const data = await resp.json();
+    if (data.error) {
+      const isRL = resp.status === 429 || data.error === "rate_limited";
+      container.innerHTML = `<div class="col-12 text-center py-3 ${isRL ? "rate-warn" : ""}" style="font-size:.85rem">
+        ${isRL ? "⚠ Rate limited — wait before refreshing again" : data.error}
+      </div>`;
+      return;
+    }
+    document.getElementById("active-key-label").textContent = `Key: ${data.active_key}`;
+    document.getElementById("last-updated").textContent = new Date().toLocaleTimeString();
+    container.innerHTML = Object.entries(data.prices).map(([id, info]) => {
+      const coin = COINS[id] || { symbol: id.toUpperCase(), icon: "●", name: id };
+      const ch = fmtChange(info.usd_24h_change);
+      const mcap = info.usd_market_cap
+        ? `<div class="coin-mcap">${fmtBig(info.usd_market_cap)}</div>` : "";
+      return `
+        <div class="col-xl-2 col-md-4 col-6">
+          <div class="coin-card">
+            <div class="coin-icon">${coin.icon}</div>
+            <div class="coin-symbol">${coin.symbol}</div>
+            <div class="coin-name">${coin.name}</div>
+            <div class="coin-price">${fmtPrice(info.usd)}</div>
+            <div class="coin-change ${ch.cls}">${ch.str}</div>
+            ${mcap}
+          </div>
+        </div>`;
+    }).join("");
+  } catch (e) {
+    container.innerHTML = `<div class="col-12 text-center py-3" style="color:#aaa;font-size:.85rem">Failed: ${e.message}</div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "↻ Refresh";
+  }
+}
+
+async function loadGlobal() {
+  try {
+    const resp = await fetch("/api/global");
+    const data = await resp.json();
+    if (data.error) return;
+    document.getElementById("global-updated").textContent = new Date().toLocaleTimeString();
+    const btcDom = data.market_cap_percentage?.btc;
+    const ethDom = data.market_cap_percentage?.eth;
+    const mcCh = data.market_cap_change_percentage_24h_usd;
+    document.getElementById("global-stats").innerHTML = `
+      <div class="col-xl col-md-4 col-6">
+        <div class="global-stat">
+          <div class="g-label">Total Market Cap</div>
+          <div class="g-value">${fmtBig(data.total_market_cap?.usd)}</div>
+          ${mcCh != null ? `<div class="g-sub ${mcCh >= 0 ? "ch-up" : "ch-down"}">${fmtChange(mcCh).str} 24h</div>` : ""}
+        </div>
+      </div>
+      <div class="col-xl col-md-4 col-6">
+        <div class="global-stat">
+          <div class="g-label">24h Volume</div>
+          <div class="g-value">${fmtBig(data.total_volume?.usd)}</div>
+        </div>
+      </div>
+      <div class="col-xl col-md-4 col-6">
+        <div class="global-stat">
+          <div class="g-label">BTC Dominance</div>
+          <div class="g-value">${btcDom ? btcDom.toFixed(1) + "%" : "—"}</div>
+        </div>
+      </div>
+      <div class="col-xl col-md-4 col-6">
+        <div class="global-stat">
+          <div class="g-label">ETH Dominance</div>
+          <div class="g-value">${ethDom ? ethDom.toFixed(1) + "%" : "—"}</div>
+        </div>
+      </div>
+      <div class="col-xl col-md-4 col-6">
+        <div class="global-stat">
+          <div class="g-label">Active Cryptos</div>
+          <div class="g-value">${data.active_cryptocurrencies?.toLocaleString() ?? "—"}</div>
+        </div>
+      </div>
+      <div class="col-xl col-md-4 col-6">
+        <div class="global-stat">
+          <div class="g-label">Markets</div>
+          <div class="g-value">${data.markets?.toLocaleString() ?? "—"}</div>
+        </div>
+      </div>`;
+  } catch (_) {}
+}
+
+async function loadMarkets() {
+  const wrapper = document.getElementById("markets-table-wrapper");
+  wrapper.innerHTML = `<div class="text-center py-4" style="color:#aaa;font-size:.85rem">Loading…</div>`;
+  try {
+    const resp = await fetch("/api/markets");
+    const coins = await resp.json();
+    if (!Array.isArray(coins)) {
+      const isRL = resp.status === 429 || coins.error === "rate_limited";
+      wrapper.innerHTML = `<div class="text-center py-4 ${isRL ? "rate-warn" : ""}" style="font-size:.85rem">
+        ${isRL ? "⚠ Rate limited — wait before refreshing" : (coins.error || "Error")}
+      </div>`;
+      return;
+    }
+    document.getElementById("markets-updated").textContent = new Date().toLocaleTimeString();
+    const rows = coins.map((c, i) => {
+      const ch24 = fmtChange(c.price_change_percentage_24h);
+      const ch7d  = fmtChange(c.price_change_percentage_7d_in_currency);
+      return `
+        <tr>
+          <td class="ps-4" style="color:#aaa;font-size:.82rem;font-weight:700">${i + 1}</td>
+          <td>
+            <div class="d-flex align-items-center gap-2">
+              ${c.image ? `<img src="${c.image}" width="22" height="22" class="markets-img">` : ""}
+              <span style="font-weight:700;font-size:.88rem">${c.symbol.toUpperCase()}</span>
+              <span style="color:#aaa;font-size:.78rem" class="d-none d-md-inline">${c.name}</span>
+            </div>
+          </td>
+          <td style="font-weight:700;font-size:.9rem">${fmtPrice(c.current_price)}</td>
+          <td class="${ch24.cls}" style="font-size:.82rem">${ch24.str}</td>
+          <td class="${ch7d.cls}"  style="font-size:.82rem">${ch7d.str}</td>
+          <td style="color:#555;font-size:.82rem">${fmtBig(c.market_cap)}</td>
+          <td style="color:#555;font-size:.82rem">${fmtBig(c.total_volume)}</td>
+          <td><canvas id="spark-${c.id}" class="sparkline" width="88" height="28"></canvas></td>
+        </tr>`;
+    }).join("");
+    wrapper.innerHTML = `
+      <table class="table mb-0">
+        <thead>
+          <tr>
+            <th class="ps-4">#</th>
+            <th>Coin</th>
+            <th>Price</th>
+            <th>24h</th>
+            <th>7d</th>
+            <th>Market Cap</th>
+            <th>Volume (24h)</th>
+            <th>7d Chart</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+    coins.forEach(c => {
+      const canvas = document.getElementById(`spark-${c.id}`);
+      if (canvas && c.sparkline_in_7d?.price) {
+        const prices = c.sparkline_in_7d.price;
+        drawSparkline(canvas, prices, prices[prices.length - 1] >= prices[0]);
+      }
+    });
+  } catch (e) {
+    wrapper.innerHTML = `<div class="text-center py-4" style="color:#aaa;font-size:.85rem">Failed: ${e.message}</div>`;
+  }
+}
+
+async function loadTrending() {
+  const list = document.getElementById("trending-list");
+  try {
+    const resp = await fetch("/api/trending");
+    const data = await resp.json();
+    if (data.error) {
+      list.innerHTML = `<div class="text-center" style="color:#aaa;font-size:.82rem">${data.error === "rate_limited" ? "⚠ Rate limited" : data.error}</div>`;
+      return;
+    }
+    list.innerHTML = (data.coins || []).slice(0, 7).map(({ item: c }) => {
+      const ch = c.data?.price_change_percentage_24h?.usd;
+      const chFmt = ch != null ? fmtChange(ch) : null;
+      return `
+        <div class="trending-item">
+          ${c.small ? `<img src="${c.small}" width="24" height="24" style="border-radius:50%;flex-shrink:0">` : `<span style="font-size:1rem;flex-shrink:0;color:#aaa">●</span>`}
+          <div style="flex:1;min-width:0;overflow:hidden">
+            <span style="font-weight:700;font-size:.82rem">${c.symbol}</span>
+            <span style="color:#aaa;font-size:.75rem;margin-left:5px">${c.name}</span>
+          </div>
+          ${chFmt ? `<span class="${chFmt.cls}" style="font-size:.78rem;flex-shrink:0">${chFmt.str}</span>` : ""}
+        </div>`;
+    }).join("");
+  } catch (e) {
+    list.innerHTML = `<div style="color:#aaa;font-size:.82rem">Failed: ${e.message}</div>`;
+  }
+}
+
+function toggleKey(el) {
+  const full = el.dataset.full;
+  if (el.dataset.revealed === "1") {
+    el.textContent = full.slice(0, 12) + "••••";
+    el.dataset.revealed = "0";
+  } else {
+    el.textContent = full;
+    el.dataset.revealed = "1";
+  }
+}
+
+function onCreateSubmit() {
+  const btn = document.getElementById("create-btn");
+  btn.disabled = true;
+  btn.textContent = "⏳ Generating…";
+
+  const startCount = parseInt(
+    document.getElementById("stat-total-keys").textContent.replace(/,/g, "")
+  ) || 0;
+  showToast("Key generation started — dashboard will update automatically…");
+
+  const deadline = Date.now() + 5 * 60 * 1000; // 5 min timeout
+  const poller = setInterval(async () => {
+    if (Date.now() > deadline) {
+      clearInterval(poller);
+      btn.disabled = false;
+      btn.textContent = "+ Generate Key";
+      showToast("Timed out — refresh the page if key was created");
+      return;
+    }
+    try {
+      const d = await fetch("/api/usage-stats").then(r => r.json());
+      if (d.total_keys > startCount) {
+        clearInterval(poller);
+        showToast("✓ New API key added! Reloading…");
+        setTimeout(() => location.reload(), 1200);
+      }
+    } catch (_) {}
+  }, 5000);
+}
+
+function showToast(msg) {
+  const t = document.getElementById("toast");
+  document.getElementById("toast-msg").textContent = msg;
+  t.style.display = "flex";
+  clearTimeout(t._timer);
+  t._timer = setTimeout(hideToast, 6000);
+}
+
+function hideToast() {
+  document.getElementById("toast").style.display = "none";
+}
+
+// ── API Keys table pagination ────────────────────────────────────────────────
+(function() {
+  const PER_PAGE = 5;
+  const tbody = document.querySelector('#keys-pagination')?.closest('.card')?.querySelector('tbody');
+  const pgEl  = document.getElementById('keys-pagination');
+  if (!tbody || !pgEl) return;
+
+  const rows = [...tbody.querySelectorAll('tr[class]')]; // only data rows (skip empty-state)
+  if (rows.length <= PER_PAGE) return; // no pagination needed
+
+  let page = 1;
+  const totalPages = Math.ceil(rows.length / PER_PAGE);
+
+  function render() {
+    rows.forEach((r, i) => {
+      r.style.display = (i >= (page-1)*PER_PAGE && i < page*PER_PAGE) ? '' : 'none';
+    });
+    pgEl.innerHTML = '';
+    const prev = document.createElement('button');
+    prev.textContent = '‹';
+    prev.disabled = page === 1;
+    prev.onclick = () => { page--; render(); };
+    pgEl.appendChild(prev);
+
+    for (let p = 1; p <= totalPages; p++) {
+      const btn = document.createElement('button');
+      btn.textContent = p;
+      if (p === page) btn.classList.add('active');
+      btn.onclick = () => { page = p; render(); };
+      pgEl.appendChild(btn);
+    }
+
+    const next = document.createElement('button');
+    next.textContent = '›';
+    next.disabled = page === totalPages;
+    next.onclick = () => { page++; render(); };
+    pgEl.appendChild(next);
+
+    const info = document.createElement('span');
+    info.className = 'pg-info';
+    info.textContent = `${(page-1)*PER_PAGE+1}–${Math.min(page*PER_PAGE, rows.length)} of ${rows.length}`;
+    pgEl.appendChild(info);
+  }
+
+  render();
+})();
+
+// ── Live usage stats (updates stat cards + table rows without a page reload) ───
+async function loadUsageStats() {
+  try {
+    const resp = await fetch("/api/usage-stats");
+    const d = await resp.json();
+    document.getElementById("stat-total-keys").textContent = d.total_keys.toLocaleString();
+    document.getElementById("stat-calls-left").textContent = d.total_left.toLocaleString();
+    document.getElementById("stat-calls-used").textContent = d.total_used.toLocaleString();
+
+    // Update per-row cells in the API Keys table
+    (d.keys || []).forEach(k => {
+      const pct = Math.min(Math.round((k.calls_used / 10000) * 100), 100);
+      const left = k.calls_left ?? 0;
+
+      const elUsed = document.getElementById(`row-used-${k.id}`);
+      const elLeft = document.getElementById(`row-left-${k.id}`);
+      const elBar  = document.getElementById(`row-bar-${k.id}`);
+      const elPct  = document.getElementById(`row-pct-${k.id}`);
+
+      if (elUsed) elUsed.textContent = k.calls_used.toLocaleString();
+      if (elLeft) {
+        elLeft.textContent = left.toLocaleString();
+        elLeft.style.color = left > 5000 ? "#0a0a0a" : left > 1000 ? "#555" : "#999";
+      }
+      if (elBar)  elBar.style.width = pct + "%";
+      if (elPct)  elPct.textContent = pct + "% used";
+    });
+  } catch (_) {}
+}
+
+// ── Stress test ────────────────────────────────────────────────────────────────
+let _stressEvt = null;
+let _stressLogOpen = false;
+
+function toggleStressLog() {
+  _stressLogOpen = !_stressLogOpen;
+  document.getElementById("stress-log-wrap").style.display = _stressLogOpen ? "block" : "none";
+  document.getElementById("stress-log-toggle").textContent = _stressLogOpen ? "▾ collapse" : "▸ expand";
+}
+
+function appendStressLog(d) {
+  if (!d.endpoint) return;
+  const log = document.getElementById("stress-log");
+  const statusTxt = d.status === 429 ? "429 RL"
+                  : d.status ? String(d.status) : "ERR";
+  const statusColor = d.status === 200 ? "#0a0a0a"
+                    : d.status === 429 ? "#999"
+                    : "#c00";
+  const row = document.createElement("div");
+  row.style.cssText =
+    "display:grid;grid-template-columns:36px 1fr 56px 54px;gap:8px;" +
+    "padding:3px 2px;border-bottom:1px solid #f2f2f2;font-family:'SF Mono','Fira Code',monospace";
+  row.innerHTML =
+    `<span style="font-size:.68rem;color:#bbb">${d.done}</span>` +
+    `<span style="font-size:.68rem;color:#444;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${d.endpoint}">${d.endpoint}</span>` +
+    `<span style="font-size:.68rem;font-weight:700;color:${statusColor};text-align:right">${statusTxt}</span>` +
+    `<span style="font-size:.68rem;color:#aaa;text-align:right">${d.latency_ms != null ? d.latency_ms : "—"}</span>`;
+  log.insertBefore(row, log.firstChild);   // newest at top
+  // Cap at 200 rows
+  while (log.children.length > 200) log.removeChild(log.lastChild);
+}
+
+function runStressTest() {
+  if (_stressEvt) { _stressEvt.close(); _stressEvt = null; }
+
+  const n   = document.getElementById("stress-n").value;
+  const btn = document.getElementById("stress-btn");
+
+  btn.disabled    = true;
+  btn.textContent = "⏳ Running…";
+
+  // Reset UI
+  document.getElementById("stress-progress-wrap").style.display = "block";
+  document.getElementById("stress-quota-wrap").style.display    = "none";
+  document.getElementById("stress-bar").style.width             = "0%";
+  document.getElementById("stress-pct-txt").textContent         = "0%";
+  document.getElementById("stress-done").textContent            = "0";
+  document.getElementById("stress-used").textContent            = "—";
+  document.getElementById("stress-left").textContent            = "—";
+  document.getElementById("stress-errors").textContent          = "0";
+  document.getElementById("stress-rl").textContent              = "0";
+  document.getElementById("stress-status").textContent          = "—";
+  document.getElementById("stress-message").textContent         = "";
+  document.getElementById("stress-log").innerHTML               = "";
+
+  _stressEvt = new EventSource(`/api/stress-test?n=${n}`);
+
+  _stressEvt.onmessage = (e) => {
+    const d   = JSON.parse(e.data);
+    const pct = d.total > 0 ? Math.round((d.done / d.total) * 100) : 0;
+
+    document.getElementById("stress-bar").style.width     = pct + "%";
+    document.getElementById("stress-pct-txt").textContent = pct + "%";
+    document.getElementById("stress-done").textContent    = `${d.done} / ${d.total}`;
+    document.getElementById("stress-errors").textContent  = d.errors      ?? "0";
+    document.getElementById("stress-rl").textContent      = d.rate_limited ?? "0";
+
+    appendStressLog(d);
+
+    if (d.status) {
+      const el = document.getElementById("stress-status");
+      el.textContent = d.status;
+      el.style.color = d.status === 200 ? "#0a0a0a" : d.status === 429 ? "#f97316" : "#888";
+    }
+
+    if (d.calls_used != null) {
+      document.getElementById("stress-used").textContent = d.calls_used.toLocaleString();
+      document.getElementById("stress-left").textContent = (d.calls_left ?? 0).toLocaleString();
+
+      const usedPct = Math.min(Math.round((d.calls_used / 10000) * 100), 100);
+      document.getElementById("stress-quota-wrap").style.display = "block";
+      document.getElementById("stress-quota-bar").style.width    = usedPct + "%";
+      document.getElementById("stress-quota-txt").textContent    =
+        `${d.calls_used.toLocaleString()} / 10,000 (${usedPct}%)`;
+
+      // Update top stat cards live
+      document.getElementById("stat-calls-used").textContent = d.calls_used.toLocaleString();
+      document.getElementById("stat-calls-left").textContent = (d.calls_left ?? 0).toLocaleString();
+    }
+
+    if (d.message) {
+      document.getElementById("stress-message").textContent = d.message;
+    }
+
+    if (d.complete) {
+      _stressEvt.close();
+      _stressEvt = null;
+      btn.disabled    = false;
+      btn.textContent = "▶ Run Test";
+      document.getElementById("stress-message").textContent =
+        `✓ Done — ${d.done} calls made, ${d.errors} errors, ${d.rate_limited} rate-limited`;
+      loadUsageStats(); // sync table rows immediately
+    }
+  };
+
+  _stressEvt.onerror = () => {
+    if (_stressEvt) { _stressEvt.close(); _stressEvt = null; }
+    btn.disabled    = false;
+    btn.textContent = "▶ Run Test";
+    document.getElementById("stress-message").textContent = "Stream closed";
+  };
+}
+
+// ── Boot ───────────────────────────────────────────────────────────────────────
+loadPrices();
+setTimeout(loadGlobal,      400);
+setTimeout(loadMarkets,     800);
+setTimeout(loadTrending,   1200);
+setTimeout(loadUsageStats, 2000); // initial stats sync after page load
+
+setInterval(loadPrices,      60000);
+setInterval(loadMarkets,    120000);
+setInterval(loadGlobal,     150000);
+setInterval(loadTrending,   180000);
+setInterval(loadUsageStats,  30000); // refresh usage counters every 30 s
+</script>
+</body>
+</html>
