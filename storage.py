@@ -103,5 +103,36 @@ def get_active_account():
         return dict(row) if row else None
 
 
+def init_bulk_db():
+    with _conn() as con:
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS bulk_runs (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                mode          TEXT,
+                target_count  INTEGER,
+                run_forever   INTEGER DEFAULT 0,
+                verify_email  INTEGER DEFAULT 0,
+                status        TEXT DEFAULT 'running',
+                started_at    TEXT DEFAULT CURRENT_TIMESTAMP,
+                total_created INTEGER DEFAULT 0,
+                total_failed  INTEGER DEFAULT 0
+            )
+        """)
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS bulk_accounts (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id     INTEGER REFERENCES bulk_runs(id),
+                email      TEXT,
+                password   TEXT,
+                verified   INTEGER DEFAULT 0,
+                status     TEXT DEFAULT 'pending',
+                error      TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        con.commit()
+
+
 init_db()
 _migrate()
+init_bulk_db()
