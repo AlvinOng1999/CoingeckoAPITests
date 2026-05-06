@@ -243,6 +243,11 @@
 
     /* Dot indicator */
     .dot-alive { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #000; margin-right: 8px; }
+
+    .reveal-wrap { display: inline-flex; align-items: center; gap: 6px; }
+    .reveal-val { font-family: monospace; font-size: .8rem; }
+    .reveal-btn { background: none; border: none; cursor: pointer; color: #aaa; padding: 0; font-size: .85rem; line-height: 1; }
+    .reveal-btn:hover { color: #000; }
   </style>
 </head>
 <body>
@@ -386,6 +391,7 @@
           <tr>
             <th class="ps-4">#</th>
             <th>Email</th>
+            <th>Password</th>
             <th>API Key</th>
             <th>Used</th>
             <th>Remaining</th>
@@ -407,9 +413,16 @@
             </td>
             <td style="font-size:.85rem;color:#333">{{ acc.email }}</td>
             <td>
-              <span class="badge-key" onclick="toggleKey(this)" data-full="{{ acc.api_key }}">
-                {{ acc.api_key[:12] }}••••
-              </span>
+              <div class="reveal-wrap">
+                <span class="reveal-val" data-masked="••••••••" data-revealed="0">••••••••</span>
+                <button class="reveal-btn" onclick="toggleReveal(this, '{{ acc.cg_password }}')">👁</button>
+              </div>
+            </td>
+            <td>
+              <div class="reveal-wrap">
+                <span class="reveal-val" data-masked="{{ acc.api_key[:12] }}••••" data-revealed="0">{{ acc.api_key[:12] }}••••</span>
+                <button class="reveal-btn" onclick="toggleReveal(this, '{{ acc.api_key }}')">👁</button>
+              </div>
             </td>
             <td style="font-size:.9rem;font-weight:600" id="row-used-{{ acc.id }}">{{ "{:,}".format(acc.calls_used) }}</td>
             <td style="font-size:.9rem;font-weight:600" id="row-left-{{ acc.id }}">
@@ -446,7 +459,7 @@
           </tr>
           {% else %}
           <tr>
-            <td colspan="8" class="text-center py-5" style="color:#aaa">
+            <td colspan="9" class="text-center py-5" style="color:#aaa">
               No API keys yet — click <strong>+ Generate Key</strong> to start.
             </td>
           </tr>
@@ -817,6 +830,19 @@ function toggleKey(el) {
   } else {
     el.textContent = full;
     el.dataset.revealed = "1";
+  }
+}
+
+function toggleReveal(btn, fullVal) {
+  const span = btn.previousElementSibling;
+  if (span.dataset.revealed === '1') {
+    span.textContent = span.dataset.masked;
+    span.dataset.revealed = '0';
+    btn.textContent = '👁';
+  } else {
+    span.textContent = fullVal;
+    span.dataset.revealed = '1';
+    btn.textContent = '🙈';
   }
 }
 
