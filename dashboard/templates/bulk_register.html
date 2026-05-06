@@ -47,7 +47,10 @@
     .prog-bar-wrap { background: #f0f0f0; border-radius: 6px; height: 8px; margin-bottom: 14px; }
     .prog-bar-fill { background: #000; height: 8px; border-radius: 6px; width: 0%; transition: width .3s; }
     .log-panels { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-    .log-panel-label { font-size: .72rem; font-weight: 600; color: #666; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 4px; }
+    .log-panel-hdr { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+    .log-panel-label { font-size: .72rem; font-weight: 600; color: #666; text-transform: uppercase; letter-spacing: .05em; }
+    .btn-clear { background: transparent; border: 1px solid #555; color: #999; padding: 1px 7px; border-radius: 4px; font-size: .68rem; cursor: pointer; }
+    .btn-clear:hover { border-color: #999; color: #ccc; }
     .log-feed { background: #1a1a1a; border-radius: 8px; padding: 12px 14px; font-family: monospace; font-size: .78rem; color: #aaa; height: 150px; overflow-y: auto; }
     .log-ok { color: #4ade80; }
     .log-err { color: #f87171; }
@@ -146,18 +149,24 @@
   <div class="prog-panel" id="prog-panel">
     <div class="prog-header">
       <span class="prog-label" id="prog-label">Run in progress</span>
-      <span class="prog-stats" id="prog-stats">0 created &middot; 0 failed</span>
+      <span class="prog-stats" id="prog-stats"><span style="color:#16a34a;font-weight:600">0 created</span> &middot; <span style="color:#dc2626;font-weight:600">0 failed</span></span>
     </div>
     <div class="prog-bar-wrap" id="prog-bar-wrap">
       <div class="prog-bar-fill" id="prog-bar"></div>
     </div>
     <div class="log-panels">
       <div>
-        <div class="log-panel-label">Live Events</div>
+        <div class="log-panel-hdr">
+          <span class="log-panel-label">Live Events</span>
+          <button class="btn-clear" onclick="clearLog('log-feed')">Clear</button>
+        </div>
         <div class="log-feed" id="log-feed"></div>
       </div>
       <div>
-        <div class="log-panel-label">Step Log</div>
+        <div class="log-panel-hdr">
+          <span class="log-panel-label">Step Log</span>
+          <button class="btn-clear" onclick="clearLog('step-log')">Clear</button>
+        </div>
         <div class="log-feed" id="step-log"></div>
       </div>
     </div>
@@ -270,9 +279,10 @@ function updateProgress(d) {
   if (!forever && total) {
     document.getElementById('prog-bar').style.width = Math.min(100, (done / total) * 100) + '%';
   }
-  let stats = done + ' created · ' + errors + ' failed';
-  if (d.rate_limited) stats += ' · ' + d.rate_limited + ' rate-limited';
-  document.getElementById('prog-stats').textContent = stats;
+  let stats = '<span style="color:#16a34a;font-weight:600">' + done + ' created</span>' +
+              ' &middot; <span style="color:#dc2626;font-weight:600">' + errors + ' failed</span>';
+  if (d.rate_limited) stats += ' &middot; ' + d.rate_limited + ' rate-limited';
+  document.getElementById('prog-stats').innerHTML = stats;
   if (d.email && d.status) {
     const feed = document.getElementById('log-feed');
     const line = document.createElement('div');
@@ -345,6 +355,10 @@ async function loadStepLog() {
     return '<div class="' + cls + '">' + l.replace(/</g, '&lt;') + '</div>';
   }).join('');
   feed.scrollTop = feed.scrollHeight;
+}
+
+function clearLog(id) {
+  document.getElementById(id).innerHTML = '';
 }
 
 function onFilterChange() {
