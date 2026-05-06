@@ -196,11 +196,13 @@ python dashboard/app.py
 
 | Route | Method | Action |
 |---|---|---|
-| `/` | GET | Shows all accounts with password and full API key (show/hide toggles) |
+| `/` | GET | Main dashboard — API keys table with password and full API key (show/hide toggles), usage stat cards, sync bar |
 | `/create` | POST | Launches `main.py --count 1` as a subprocess |
 | `/pin/<id>` | POST | Pins an account as the active key |
 | `/unpin` | POST | Unpins all; reverts to oldest-with-calls logic |
 | `/delete/<id>` | POST | Removes an account from the database |
+| `/refresh/<api_key>` | POST | Syncs usage from CoinGecko `GET /key`, then redirects to `/` |
+| `/refresh-all` | POST | Syncs all keys from CoinGecko, then redirects to `/` |
 | `/bulk-register` | GET | Bulk account registration stress-test page |
 | `/search` | GET | Coin search page |
 | `/backtest` | GET | Strategy backtesting page |
@@ -208,15 +210,37 @@ python dashboard/app.py
 | `/api/global` | GET | Proxies CoinGecko `/global` market stats |
 | `/api/trending` | GET | Proxies CoinGecko `/search/trending` |
 | `/api/markets` | GET | Proxies CoinGecko `/coins/markets` (top 10 by market cap) |
-| `/api/debug-key` | GET | Returns locally-tracked usage for the active key |
-| `/api/bulk-start` | POST | Starts a bulk run; returns `run_id` |
+| `/api/usage-stats` | GET | JSON usage totals for all keys — polled every few seconds by the dashboard |
+| `/api/sync-all` | POST | Syncs all keys from CoinGecko `GET /key`; returns `{synced, total, pro_required, keys[]}` |
+| `/api/debug-key` | GET | Tries live sync from `GET /key`; falls back to local DB; returns `{source, calls_used, calls_left}` |
+| `/api/bulk-start` | POST | Starts a bulk run; returns `{run_id, mode, max_workers}` |
 | `/api/bulk-stop` | POST | Signals workers to stop gracefully |
 | `/api/bulk-stream/<run_id>` | GET | SSE stream of live per-account events |
 | `/api/bulk-accounts` | GET | JSON list of bulk accounts (filterable by `run_id`, `status`, `mode`) |
+| `/api/bulk-delete` | POST | Deletes bulk accounts by ID list `{ids: [...]}` |
 | `/api/bulk-export` | GET | Download `.xlsx` file (`?run_id=<id>` or all accounts) |
 | `/api/bulk-log/<run_id>` | GET | Last 200 lines of the run's plain-text step log |
 
 Each API proxy call automatically increments `calls_used` / decrements `calls_left` in the DB for real-time feedback. Returns HTTP 429 passthrough if CoinGecko rate-limits.
+
+#### Usage sync
+
+The dashboard tracks API usage locally (counting only calls made through the app). To sync with CoinGecko's actual count, the app calls `GET /api/v3/key` using the demo key. If CoinGecko returns usage data (`current_total_monthly_calls`, `current_remaining_monthly_calls`), the DB is updated in-place. If the endpoint returns 401/403 (Pro subscription required), the dashboard shows a warning and continues with local counts.
+
+Sync is triggered in three ways:
+- **`↻` row button** in the API keys table — syncs that specific key
+- **`↻ Sync from CoinGecko` button** on the stats bar — syncs all keys via AJAX (no page reload)
+- **`/api/debug-key`** — always attempts a live sync before returning usage data
+
+---
+
+#### Main dashboard UI features
+
+- **API keys table** — columns: Email, Password (hidden by default), API Key (hidden by default), Calls Used, Calls Left, Usage Bar, Created, Actions. Password and API key each have a 👁 / 🙈 toggle to reveal/hide the full value.
+- **Stat cards** — Total Keys, Calls Remaining, Calls Used, Active Key. Updated every few seconds without a page reload via `/api/usage-stats`.
+- **Sync bar** — shown below the stat cards. Displays a note about local tracking. "↻ Sync from CoinGecko" button calls `/api/sync-all` and updates the stat cards in place; shows green success or a red Pro-required warning.
+- **Global Market, Trending, Markets** — live CoinGecko data panels, auto-refreshing.
+- **Stress Test** — controlled API blast with live SSE progress, latency chart, and monthly usage bar.
 
 ---
 
@@ -270,6 +294,14 @@ Both modes write granular per-step entries to `logs/bulk_run_<id>.txt` using `>`
 #### Stop mechanism
 
 `POST /api/bulk-stop` sets the run's `threading.Event`. Workers check it before starting each new account and after completing `as_completed` futures. The executor is shut down with `shutdown(wait=False, cancel_futures=True)` for immediate cancellation.
+
+#### Bulk accounts table (on `/bulk-register`)
+
+- **Pagination** — 25 / 50 / 100 accounts per page selector; Prev / Next buttons; pager row hidden when all results fit on one page. Filter changes (mode / status) reset to page 1.
+- **Select / Select All** — checkbox per row; header checkbox selects or deselects all rows on the current page (indeterminate when partially selected). Selections are preserved across page navigation and the 3-second polling refresh.
+- **Delete** — "Delete (N)" button shows the selection count; disabled when nothing is selected. Clicking confirms, then calls `POST /api/bulk-delete` with the selected IDs and reloads the table.
+- **Log panels** — two side-by-side panels in the progress area. **Live Events** (left) shows SSE summary events in real time; **Step Log** (right) polls `/api/bulk-log/<run_id>` every 2 seconds and shows granular per-step entries from the log file. Both panels have a **Clear** button in their header to wipe the display without affecting the underlying log file.
+- **Stats** — created count displayed in green, failed count in red, rate-limited count appended when non-zero.
 
 ---
 
@@ -446,7 +478,7 @@ qa api/
 
 - `main.py` runs the browser **headful** (visible window) by default. Bulk Register Mode C uses headless Camoufox — this is intentional since bulk runs don't need to be observed.
 - `accounts.db`, `registration_requests.json`, and `logs/` may contain generated emails, passwords, and API keys — treat them as secret files and do not commit them to public repositories.
-- Each CoinGecko demo API key has a **10,000 calls/month** free limit. Usage is tracked locally since the `/key` status endpoint requires a PRO subscription.
+- Each CoinGecko demo API key has a **10,000 calls/month** free limit. Usage is tracked locally and can be synced from CoinGecko's `GET /key` endpoint via the dashboard's sync button or the `↻` row button. If `GET /key` returns 401/403 (Pro subscription required), the dashboard falls back to local counts only.
 - All account creation and key generation scripts call **live external services**. Only run them when you have explicit authorization to do so.
 - **Mode B auto-discovery**: On the first Mode B run, a browser session is launched automatically to capture CoinGecko's registration endpoints (costs ~2 captcha solves). This only happens once — `registration_requests.json` is reused on all subsequent runs. Delete this file to force re-discovery if the registration flow changes.
 - **CAPTCHA costs**: Mode B requires two captcha solves per account (Turnstile + hCaptcha). At CapSolver rates, expect ~$0.0018 per account. Set `CAPTCHA_SERVICE` and `CAPTCHA_API_KEY` env vars before running Mode B.
