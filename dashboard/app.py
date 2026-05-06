@@ -3,11 +3,14 @@ import sys
 import os
 import json
 import time
+import threading
 import requests
 from flask import Flask, render_template, redirect, url_for, jsonify, request, Response
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import storage
+import bulk_register
 
 app = Flask(__name__)
 CG_BASE = "https://api.coingecko.com/api/v3"
@@ -473,6 +476,84 @@ def api_stress_test():
         mimetype="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+# ── Bulk Register ─────────────────────────────────────────────────────────────
+
+@app.route("/bulk-register")
+def bulk_register_page():
+    return render_template("bulk_register.html")
+
+
+@app.route("/api/bulk-start", methods=["POST"])
+def api_bulk_start():
+    body = request.get_json(force=True)
+    mode        = body.get("mode", "http")
+    count       = body.get("count", 100)
+    run_forever = bool(body.get("run_forever", False))
+    verify      = bool(body.get("verify_email", True))
+    max_workers = int(body.get("max_workers", 50 if mode == "http" else 5))
+    max_workers = min(max_workers, 200 if mode == "http" else 20)
+
+    run_id = bulk_register.start_run(mode, None if run_forever else count, run_forever, verify)
+
+    def _run():
+        gen = (bulk_register.run_mode_b if mode == "http" else bulk_register.run_mode_c)(
+            run_id, count, run_forever, verify, max_workers
+        )
+        for _ in gen:
+            pass
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+
+    return jsonify({"run_id": run_id, "mode": mode})
+
+
+@app.route("/api/bulk-stop", methods=["POST"])
+def api_bulk_stop():
+    body = request.get_json(force=True)
+    run_id = int(body.get("run_id", 0))
+    bulk_register.stop_run(run_id)
+    return jsonify({"ok": True, "run_id": run_id})
+
+
+@app.route("/api/bulk-stream/<int:run_id>")
+def api_bulk_stream(run_id):
+    run = storage.get_bulk_run(run_id)
+    if not run:
+        def _err():
+            yield f"data: {json.dumps({'error': 'run not found'})}\n\n"
+        return Response(_err(), mimetype="text/event-stream")
+
+    mode        = run["mode"]
+    run_forever = bool(run["run_forever"])
+    verify      = bool(run["verify_email"])
+    count       = run["target_count"]
+
+    stop_event = bulk_register._STOP_EVENTS.get(run_id, threading.Event())
+    bulk_register._STOP_EVENTS[run_id] = stop_event
+
+    def generate():
+        gen = (bulk_register.run_mode_b if mode == "http" else bulk_register.run_mode_c)(
+            run_id, count, run_forever, verify
+        )
+        for event in gen:
+            yield event
+
+    return Response(
+        generate(),
+        mimetype="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.route("/api/bulk-accounts")
+def api_bulk_accounts():
+    run_id = request.args.get("run_id", type=int)
+    status = request.args.get("status")
+    mode   = request.args.get("mode")
+    return jsonify(storage.get_bulk_accounts(run_id=run_id, status=status, mode=mode))
 
 
 if __name__ == "__main__":
