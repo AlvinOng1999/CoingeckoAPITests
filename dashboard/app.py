@@ -623,6 +623,14 @@ def api_bulk_export():
                      mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
+@app.route("/api/bulk-delete", methods=["POST"])
+def api_bulk_delete():
+    body = request.get_json(force=True)
+    ids = body.get("ids", [])
+    deleted = storage.delete_bulk_accounts(ids)
+    return jsonify({"ok": True, "deleted": deleted})
+
+
 @app.route("/api/bulk-log/<int:run_id>")
 def api_bulk_log(run_id):
     log_path = os.path.join(os.path.dirname(__file__), "..", "logs", f"bulk_run_{run_id}.txt")

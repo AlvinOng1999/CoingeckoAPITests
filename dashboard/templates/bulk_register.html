@@ -69,6 +69,15 @@
     .s-pending { color: #d97706; }
     .s-failed { color: #6b7280; }
     .tbl-empty { padding: 32px; text-align: center; color: #aaa; font-size: .85rem; }
+    .btn-danger { background: #dc3545; color: #fff; border: none; padding: 5px 14px; border-radius: 6px; font-size: .78rem; font-weight: 600; cursor: pointer; }
+    .btn-danger:disabled { opacity: .4; cursor: not-allowed; }
+    .btn-danger:hover:not(:disabled) { background: #bb2d3b; }
+    .pager-row { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 12px 20px; border-top: 1px solid #f0f0f0; }
+    .pager-btn { background: #fff; border: 1px solid #ccc; padding: 4px 12px; border-radius: 5px; font-size: .8rem; cursor: pointer; }
+    .pager-btn:disabled { opacity: .4; cursor: not-allowed; }
+    .pager-btn:hover:not(:disabled) { border-color: #000; }
+    .pager-info { font-size: .82rem; color: #666; min-width: 120px; text-align: center; }
+    table.accts th:first-child, table.accts td:first-child { width: 36px; }
   </style>
 </head>
 <body>
@@ -158,22 +167,33 @@
     <div class="tbl-header">
       <span class="tbl-title">Registered Accounts <span id="acct-count" style="font-weight:400;color:#999;font-size:.82rem;"></span></span>
       <div class="tbl-controls">
-        <select class="tbl-filter" id="fil-mode" onchange="loadAccounts()">
+        <button class="btn-danger" id="btn-delete" onclick="deleteSelected()" disabled>Delete (<span id="sel-count">0</span>)</button>
+        <select class="tbl-filter" id="fil-mode" onchange="onFilterChange()">
           <option value="">All modes</option>
           <option value="http">HTTP Blast</option>
           <option value="browser">Browser Pool</option>
         </select>
-        <select class="tbl-filter" id="fil-status" onchange="loadAccounts()">
+        <select class="tbl-filter" id="fil-status" onchange="onFilterChange()">
           <option value="">All statuses</option>
           <option value="verified">Verified</option>
           <option value="unverified">Unverified</option>
           <option value="failed">Failed</option>
+        </select>
+        <select class="tbl-filter" id="fil-page-size" onchange="onPageSizeChange()">
+          <option value="25">25 / page</option>
+          <option value="50">50 / page</option>
+          <option value="100">100 / page</option>
         </select>
         <button class="btn-export" onclick="exportXlsx()">&#11015; Export Excel</button>
       </div>
     </div>
     <div id="tbl-body">
       <div class="tbl-empty">No accounts yet &mdash; start a run above.</div>
+    </div>
+    <div id="pager-row" class="pager-row" style="display:none">
+      <button class="pager-btn" id="btn-prev" onclick="prevPage()">&#8592; Prev</button>
+      <span id="pager-info" class="pager-info"></span>
+      <button class="pager-btn" id="btn-next" onclick="nextPage()">Next &#8594;</button>
     </div>
   </div>
 </div>
@@ -184,6 +204,10 @@ let currentRunId = null;
 let sseSource = null;
 let pollInterval = null;
 let stepLogInterval = null;
+let allAccounts = [];
+let currentPage = 1;
+let pageSize = 25;
+let selectedIds = new Set();
 
 function switchMode(mode) {
   currentMode = mode;
@@ -323,6 +347,118 @@ async function loadStepLog() {
   feed.scrollTop = feed.scrollHeight;
 }
 
+function onFilterChange() {
+  currentPage = 1;
+  loadAccounts();
+}
+
+function onPageSizeChange() {
+  pageSize = parseInt(document.getElementById('fil-page-size').value);
+  currentPage = 1;
+  renderTable();
+}
+
+function prevPage() {
+  if (currentPage > 1) { currentPage--; renderTable(); }
+}
+
+function nextPage() {
+  const totalPages = Math.max(1, Math.ceil(allAccounts.length / pageSize));
+  if (currentPage < totalPages) { currentPage++; renderTable(); }
+}
+
+function toggleSelectAll() {
+  const chkAll = document.getElementById('chk-all');
+  if (!chkAll) return;
+  const start = (currentPage - 1) * pageSize;
+  allAccounts.slice(start, start + pageSize).forEach(function(a) {
+    if (chkAll.checked) selectedIds.add(a.id); else selectedIds.delete(a.id);
+  });
+  updateDeleteBtn();
+  renderTable();
+}
+
+function onRowCheck(cb) {
+  const id = parseInt(cb.dataset.id);
+  if (cb.checked) selectedIds.add(id); else selectedIds.delete(id);
+  updateDeleteBtn();
+  const start = (currentPage - 1) * pageSize;
+  const pageIds = allAccounts.slice(start, start + pageSize).map(a => a.id);
+  const allSel = pageIds.length > 0 && pageIds.every(id => selectedIds.has(id));
+  const someSel = pageIds.some(id => selectedIds.has(id));
+  const chkAll = document.getElementById('chk-all');
+  if (chkAll) { chkAll.checked = allSel; chkAll.indeterminate = !allSel && someSel; }
+}
+
+function updateDeleteBtn() {
+  const n = selectedIds.size;
+  document.getElementById('btn-delete').disabled = n === 0;
+  document.getElementById('sel-count').textContent = n;
+}
+
+async function deleteSelected() {
+  if (!selectedIds.size) return;
+  if (!confirm('Delete ' + selectedIds.size + ' account(s)? This cannot be undone.')) return;
+  await fetch('/api/bulk-delete', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ids: [...selectedIds]}),
+  });
+  selectedIds.clear();
+  updateDeleteBtn();
+  await loadAccounts();
+}
+
+function renderTable() {
+  const total = allAccounts.length;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  if (currentPage > totalPages) currentPage = totalPages;
+  const start = (currentPage - 1) * pageSize;
+  const pageAccts = allAccounts.slice(start, start + pageSize);
+
+  document.getElementById('acct-count').textContent = '(' + total + ' total)';
+
+  const pagerRow = document.getElementById('pager-row');
+  if (total > pageSize) {
+    pagerRow.style.display = 'flex';
+    document.getElementById('pager-info').textContent = 'Page ' + currentPage + ' of ' + totalPages;
+    document.getElementById('btn-prev').disabled = currentPage <= 1;
+    document.getElementById('btn-next').disabled = currentPage >= totalPages;
+  } else {
+    pagerRow.style.display = 'none';
+  }
+
+  if (!pageAccts.length) {
+    document.getElementById('tbl-body').innerHTML = '<div class="tbl-empty">No accounts match the current filters.</div>';
+    return;
+  }
+
+  const pageIds = pageAccts.map(a => a.id);
+  const allPageSel = pageIds.length > 0 && pageIds.every(id => selectedIds.has(id));
+  const somePageSel = pageIds.some(id => selectedIds.has(id));
+
+  const rows = pageAccts.map(function(a, i) {
+    const chk = selectedIds.has(a.id) ? 'checked' : '';
+    return '<tr>' +
+      '<td><input type="checkbox" class="row-chk" data-id="' + a.id + '" ' + chk + ' onchange="onRowCheck(this)"></td>' +
+      '<td style="color:#aaa">' + (total - start - i) + '</td>' +
+      '<td class="mono">' + a.email + '</td>' +
+      '<td class="mono">' + a.password + '</td>' +
+      '<td>' + statusBadge(a.status) + '</td>' +
+      '<td>' + modeBadge(a.mode) + '</td>' +
+      '<td style="color:#aaa">' + relTime(a.created_at) + '</td></tr>';
+  }).join('');
+
+  document.getElementById('tbl-body').innerHTML =
+    '<table class="accts"><thead><tr>' +
+    '<th><input type="checkbox" id="chk-all" ' + (allPageSel ? 'checked' : '') + ' onchange="toggleSelectAll()"></th>' +
+    '<th>#</th><th>Email</th><th>Password</th><th>Verification</th><th>Mode</th><th>Created</th>' +
+    '</tr></thead><tbody>' + rows + '</tbody></table>';
+
+  const chkAll = document.getElementById('chk-all');
+  if (chkAll) chkAll.indeterminate = !allPageSel && somePageSel;
+}
+
 async function loadAccounts() {
   const mode = document.getElementById('fil-mode').value;
   const status = document.getElementById('fil-status').value;
@@ -330,22 +466,8 @@ async function loadAccounts() {
   if (mode) url += 'mode=' + mode + '&';
   if (status) url += 'status=' + status + '&';
   const resp = await fetch(url);
-  const accounts = await resp.json();
-  document.getElementById('acct-count').textContent = '(' + accounts.length + ' total)';
-  if (!accounts.length) {
-    document.getElementById('tbl-body').innerHTML = '<div class="tbl-empty">No accounts match the current filters.</div>';
-    return;
-  }
-  const rows = accounts.map(function(a, i) {
-    return '<tr><td style="color:#aaa">' + (accounts.length - i) + '</td>' +
-      '<td class="mono">' + a.email + '</td>' +
-      '<td class="mono">' + a.password + '</td>' +
-      '<td>' + statusBadge(a.status) + '</td>' +
-      '<td>' + modeBadge(a.mode) + '</td>' +
-      '<td style="color:#aaa">' + relTime(a.created_at) + '</td></tr>';
-  }).join('');
-  document.getElementById('tbl-body').innerHTML =
-    '<table class="accts"><thead><tr><th>#</th><th>Email</th><th>Password</th><th>Verification</th><th>Mode</th><th>Created</th></tr></thead><tbody>' + rows + '</tbody></table>';
+  allAccounts = await resp.json();
+  renderTable();
 }
 
 function exportXlsx() {

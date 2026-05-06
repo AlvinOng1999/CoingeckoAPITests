@@ -177,6 +177,19 @@ def save_bulk_account(run_id: int, email: str, password: str, status: str, error
         con.commit()
 
 
+def delete_bulk_accounts(ids: list) -> int:
+    if not ids:
+        return 0
+    placeholders = ",".join("?" * len(ids))
+    with _conn() as con:
+        cur = con.execute(
+            f"DELETE FROM bulk_accounts WHERE id IN ({placeholders})",
+            list(ids),
+        )
+        con.commit()
+        return cur.rowcount
+
+
 def get_bulk_accounts(run_id: int = None, status: str = None, mode: str = None) -> list[dict]:
     query = """
         SELECT ba.*, br.mode
