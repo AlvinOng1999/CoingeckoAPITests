@@ -1,27 +1,28 @@
 # CoinGecko API Key Automation — How It Works
 
-This project automates the creation of CoinGecko demo accounts and API keys using disposable email addresses, browser automation, and CAPTCHA solving. It then exposes those keys through a local Flask dashboard.
+This project automates the creation of CoinGecko demo accounts and API keys using disposable email addresses and stealth browser automation (Camoufox — a Firefox-based anti-fingerprint browser). It then exposes those keys through a local Flask dashboard.
 
 ---
 
 ## Architecture Overview
 
 ```
-main.py  ──►  temp_email.py   (create disposable mailbox via mail.tm)
-         ──►  coingecko.py    (browser automation via Camoufox/Playwright)
-         ──►  storage.py      (persist to SQLite accounts.db)
+main.py  ──►  temp_email.py             (create disposable mailbox via mail.tm)
+         ──►  coingecko.py              (browser automation via Camoufox/Playwright)
+         ──►  storage.py                (persist to SQLite accounts.db)
 
-dashboard/app.py  ──►  storage.py         (read accounts & bulk run data)
-                  ──►  CoinGecko API      (proxy live price/market data)
-                  ──►  bulk_register.py   (parallel account creation workers)
+dashboard/app.py  ──►  storage.py       (read accounts & bulk run data)
+                  ──►  CoinGecko API    (proxy live price/market/backtest data)
+                  ──►  bulk_register.py (parallel account creation workers)
 
-bulk_register.py  ──►  temp_email.py      (disposable mailboxes)
-                  ──►  coingecko.py       (Mode C browser automation)
-                  ──►  captcha_solver.py  (Mode B captcha solving)
-                  ──►  storage.py         (persist bulk run & account data)
+dashboard/bulk_register.py  ──►  temp_email.py  (disposable mailboxes)
+                            ──►  coingecko.py   (browser automation)
+                            ──►  storage.py     (persist bulk run & account data)
 
 api_demo.py  ──►  storage.py        (pick newest key)
              ──►  CoinGecko API     (call demo endpoints directly)
+
+scripts/discover_cg_registration.py  (standalone registration analysis tool)
 ```
 
 ---
@@ -56,8 +57,8 @@ Uses the [mail.tm](https://api.mail.tm) public API (no signup required).
 | `_get_domain()` | Fetches the first available `@xxx.com` domain from mail.tm |
 | `create_mailbox()` | Registers a random `user@domain` address; also generates a strong CoinGecko password |
 | `get_token()` | Authenticates the mailbox and returns a Bearer token |
-| `poll_inbox()` | Polls every 4 seconds for up to 3 minutes until a CoinGecko email arrives |
-| `extract_verification_link()` | Uses regex to pull the `https://...coingecko.com.../confirm...` URL from the email HTML |
+| `poll_inbox()` | Polls every 5 seconds (with 0–3 s jitter before starting) for up to 3 minutes until a CoinGecko email arrives; backs off exponentially (up to 30 s) on connection errors so concurrent workers don't cascade-fail |
+| `extract_verification_link()` | Uses regex to pull the `https://...coingecko.com.../confirm...` URL from the email HTML; runs `html.unescape()` to convert `&amp;` → `&` so the token query-string is valid |
 
 The mailbox password is separate from the CoinGecko account password. A `_strong_password()` helper generates a password meeting CoinGecko's requirements (uppercase, lowercase, digits, special chars).
 
@@ -65,7 +66,7 @@ The mailbox password is separate from the CoinGecko account password. A `_strong
 
 ### `coingecko.py` — Browser Automation
 
-Contains all Playwright/Camoufox interactions with the CoinGecko website. Uses the **synchronous Playwright API** with a **headful Chromium** window (visible browser).
+Contains all Playwright interactions with the CoinGecko website. Uses the **synchronous Playwright `Page` API** — the actual browser (headful or headless Firefox via Camoufox) is provided by the caller (`main.py` uses headful, `bulk_register.py` uses headless).
 
 #### Key constants
 | Constant | Value |
@@ -73,6 +74,7 @@ Contains all Playwright/Camoufox interactions with the CoinGecko website. Uses t
 | `HOMEPAGE` | `https://www.coingecko.com/` |
 | `SIGNIN_URL` | `https://www.coingecko.com/en/users/sign_in` |
 | `API_DASH` | `https://www.coingecko.com/en/developers/dashboard` |
+| `API_PRICING` | `https://www.coingecko.com/en/api/pricing` |
 | `NAV_TIMEOUT` | 60 seconds |
 | `ELEM_TIMEOUT` | 20 seconds |
 
@@ -81,25 +83,60 @@ Contains all Playwright/Camoufox interactions with the CoinGecko website. Uses t
 **`register(page, email, password)`**
 1. Opens the CoinGecko homepage
 2. Dismisses the cookie banner
-3. Clicks **Sign up** → **Continue with email**
-4. Types the disposable email address
-5. Waits for Cloudflare Turnstile to load, then solves or waits for auto-solve
-6. Submits the email step
-7. Detects the password form, types the generated password
-8. Handles hCaptcha on the password step (click checkbox → wait for `captchaVerified`)
-9. Clicks the **Sign up** submit button
+3. Clicks the sign-up entry point via `_click_signup_entry()` (tries multiple button/link text variants: "Sign up", "Get Started", "Create Account")
+4. Clicks **Continue with email**
+5. Types the disposable email address
+6. Waits for Cloudflare Turnstile to load, then solves or waits for auto-solve
+7. Submits the email step; handles the case where the button stays disabled (force-click fallback)
+8. Detects the password form (which appears in the same modal after email submission), types the generated password
+9. Clicks the hCaptcha checkbox iframe (`_click_hcaptcha_checkbox()`) and polls for `window.captchaVerified` — Camoufox's clean fingerprint typically auto-verifies; if a challenge overlay appears, presses Escape and continues
+10. Waits up to 15 s for the **Sign up** submit button (`[data-auth-target='signUpSubmit']`) to become enabled; falls back to force-click if captchaVerified stays false
 
 **`confirm_email(page, link, password)`**
-- Navigates directly to the verification URL extracted from the inbox email
-- Fills in the password again if CoinGecko shows a "set password" prompt
+- Navigates to the verification URL via `_goto()` (which waits out any Cloudflare challenge before proceeding)
+- Fills in the password again if CoinGecko shows a "set password" prompt after confirmation
 
 **`login(page, email, password)`**
-- Opens the homepage, clicks **Login**, fills email → Continue → password → Login
+- Opens the homepage, clicks **Login**, fills email → Continue with email → password → Login
+- Handles modals that show the email input directly or require a "Continue with email" step first
 
 **`get_api_key(page, email, password)`**
-- Logs in, navigates to the API pricing page, clicks a "Get started free" CTA
-- Fills in the demo account form (company name, use case, etc.)
-- Scans the resulting page for a `CG-XXXXXXXXXXXXXXX` key using `_scan_for_api_key()`
+
+Uses a multi-stage strategy with fallbacks:
+1. Navigates directly to the developer dashboard (`API_DASH`)
+2. Re-logs in if redirected to the auth page
+3. If already on the dashboard: scans for an existing key via `_scan_for_api_key()`; if found, returns immediately
+4. Checks for an onboarding modal (`_wait_for_modal()`); if found, fills it via `_fill_demo_account_modal()`
+5. If still no key: navigates to the pricing page and clicks the free CTA via `_click_pricing_free_cta()`
+6. Re-logs in if the CTA redirects to auth
+7. Polls for a modal or key (up to 6 s); fills the modal if it appears
+8. Polls for key on the resulting page (up to 5 s)
+9. Final fallback: navigates back to dashboard, polls for key + clicks any "Create API Key" button (up to 10 s)
+10. Saves `debug_api_dash.png` and raises `RuntimeError` if no key is found
+
+#### Key private helpers
+
+| Helper | What it does |
+|---|---|
+| `_click_signup_entry(page)` | Tries multiple sign-up button/link text patterns to open the auth modal |
+| `_click_pricing_free_cta(page)` | Pure JS DOM pass — scrolls and clicks the first "Get started free" / "Create free account" element |
+| `_wait_for_modal(page)` | Polls via JS until a dialog, heading, or form with ≥2 inputs is detected |
+| `_fill_demo_account_modal(page)` | Fills the full demo account form: company (random), team size "5", role "Developer", use-case radio (Research), referral radio (Word of mouth), description textarea, ticks all checkboxes, then clicks "Create Demo Account" → "Create API Key" |
+| `_ensure_api_key_form_submitted(page)` | Wraps `_wait_for_modal` + `_fill_demo_account_modal` |
+| `_random_company_name()` | Generates a random company name from word lists (e.g. "Nova Analytics") |
+| `_scan_for_api_key(page)` | Scans input values, visible text elements, and raw HTML for a `CG-[A-Za-z0-9]{15,}` pattern |
+| `_solve_and_inject_turnstile(page)` | Calls CAPTCHA service → falls back to 20 s auto-solve wait → proceeds anyway |
+| `_click_hcaptcha_checkbox(page)` | Finds the hCaptcha checkbox iframe, clicks it, polls 30 s for `captchaVerified` |
+| `_inject_token(page, token)` | Writes a Turnstile token into the hidden input and calls `turnstileCallback` |
+| `_inject_hcaptcha_token(page, token)` | Injects hCaptcha token and sets `window.captchaVerified = true` |
+| `_is_logged_in(page)` | Returns `True` if the Login button is absent or hidden |
+| `_modal_scroll(page, amount)` | Scrolls inside the modal container (falls back to `window.scrollBy`) |
+| `_scroll_and_click_button(page, pattern)` | Scrolls then clicks the first visible+enabled button or link matching `pattern` |
+| `_first_visible(page, selectors)` | Returns the first visible locator from a list of CSS selectors |
+| `_click_visible_button(page, pattern)` | Clicks the first visible+enabled button whose text matches a regex |
+| `_goto(page, url)` | Navigates and waits for Cloudflare challenge to clear |
+| `_dismiss_cookie_banner(page)` | Clicks the cookie accept button if present |
+| `_wait_cloudflare(page)` | Polls page content/URL until the Cloudflare challenge clears |
 
 #### CAPTCHA handling
 Two CAPTCHAs appear in the signup flow:
@@ -118,8 +155,9 @@ Solving strategy (in priority order):
 
 ### `captcha_solver.py` — CAPTCHA Service Integration
 
-Configured via environment variables:
+Used only by `coingecko.py` (the single-account flow in `main.py`). **Not used by bulk registration** — Camoufox's browser fingerprint handles CAPTCHAs automatically there.
 
+Configured via environment variables (optional):
 ```bash
 set CAPTCHA_SERVICE=capsolver   # or "2captcha"
 set CAPTCHA_API_KEY=your_key_here
@@ -130,7 +168,7 @@ set CAPTCHA_API_KEY=your_key_here
 | [CapSolver](https://capsolver.com) | ~$0.80 / 1000 | ~$1.00 / 1000 |
 | [2captcha](https://2captcha.com) | ~$2.99 / 1000 | ~$2.99 / 1000 |
 
-If no API key is set, both functions return `None` and the flow falls back to the auto-solve wait.
+If no API key is set, both functions return `None` and the flow falls back to the auto-solve wait (Camoufox fingerprint usually passes within 20 seconds).
 
 ---
 
@@ -156,9 +194,9 @@ Creates and manages `accounts.db` in the project root on import. Uses WAL journa
 | Column | Type | Description |
 |---|---|---|
 | `id` | INTEGER PK | Run ID |
-| `mode` | TEXT | `'http'` or `'browser'` |
-| `target_count` | INTEGER | Target accounts (NULL if run_forever) |
-| `run_forever` | INTEGER | 1 = loop indefinitely |
+| `mode` | TEXT | Always `'browser'` |
+| `target_count` | INTEGER | Number of accounts to create |
+| `run_forever` | INTEGER | 0 = stop after target_count (always 0 currently) |
 | `verify_email` | INTEGER | 1 = verify email after registration |
 | `status` | TEXT | `'running'`, `'stopped'`, or `'done'` |
 | `started_at` | TEXT | UTC timestamp |
@@ -210,18 +248,37 @@ python dashboard/app.py
 | `/api/global` | GET | Proxies CoinGecko `/global` market stats |
 | `/api/trending` | GET | Proxies CoinGecko `/search/trending` |
 | `/api/markets` | GET | Proxies CoinGecko `/coins/markets` (top 10 by market cap) |
+| `/api/search` | GET | Proxies CoinGecko `/search?query=<q>` (coin search) |
+| `/api/backtest` | GET | Fetches price history and runs a backtest strategy (see below) |
 | `/api/usage-stats` | GET | JSON usage totals for all keys — polled every few seconds by the dashboard |
 | `/api/sync-all` | POST | Syncs all keys from CoinGecko `GET /key`; returns `{synced, total, pro_required, keys[]}` |
 | `/api/debug-key` | GET | Tries live sync from `GET /key`; falls back to local DB; returns `{source, calls_used, calls_left}` |
+| `/api/stress-test` | GET | SSE stream — burns through N API calls cycling across 6 endpoints, emitting live progress + latency |
 | `/api/bulk-start` | POST | Starts a bulk run; returns `{run_id, mode, max_workers}` |
 | `/api/bulk-stop` | POST | Signals workers to stop gracefully |
 | `/api/bulk-stream/<run_id>` | GET | SSE stream of live per-account events |
 | `/api/bulk-accounts` | GET | JSON list of bulk accounts (filterable by `run_id`, `status`, `mode`) |
 | `/api/bulk-delete` | POST | Deletes bulk accounts by ID list `{ids: [...]}` |
-| `/api/bulk-export` | GET | Download `.xlsx` file (`?run_id=<id>` or all accounts) |
+| `/api/bulk-export` | GET | Download `.xlsx` file (`?run_id=<id>` or all accounts) with Accounts + Run Log sheets |
 | `/api/bulk-log/<run_id>` | GET | Last 200 lines of the run's plain-text step log |
 
 Each API proxy call automatically increments `calls_used` / decrements `calls_left` in the DB for real-time feedback. Returns HTTP 429 passthrough if CoinGecko rate-limits.
+
+#### Backtesting (`/api/backtest`)
+
+Fetches OHLCV data from CoinGecko `/coins/{id}/market_chart` and runs a trading simulation via `compute_backtest()`. Supports three strategies:
+
+| Strategy | Parameter | Logic |
+|---|---|---|
+| **Buy & Hold** | `strategy=hold` | Buy on day 1, sell on last day |
+| **SMA Crossover** | `strategy=sma` | 7-day / 21-day moving average crossover signals |
+| **RSI** | `strategy=rsi` | 14-period RSI; buy when RSI < 30, sell when RSI > 70 |
+
+Returns: `strategy_name`, `trades`, `initial`, `final`, `return_pct`, `benchmark_return`, daily price series, and `trade_signals`.
+
+#### Stress test (`/api/stress-test`)
+
+SSE endpoint that fires N requests (1–500) cycling across 6 CoinGecko endpoints in sequence. Each event includes: `done`, `total`, `status`, `errors`, `rate_limited`, `calls_used`, `calls_left`, `endpoint`, `latency_ms`. Pauses 15 s automatically on HTTP 429.
 
 #### Usage sync
 
@@ -246,62 +303,39 @@ Sync is triggered in three ways:
 
 ### `dashboard/bulk_register.py` — Bulk Registration Workers
 
-Contains the worker logic for both bulk registration modes. Both modes expose SSE generator functions that yield progress events to the frontend.
+Runs parallel **headless** Camoufox browser workers that each create one CoinGecko account. Exposes an SSE generator (`run_bulk`) that yields progress events to the frontend. No CAPTCHA API key required — Camoufox's clean browser fingerprint handles Cloudflare Turnstile and hCaptcha automatically.
 
 **Module-level state:**
 - `_STOP_EVENTS` — dict mapping `run_id → threading.Event` for graceful stop
-- `_endpoints_cache` — cached endpoint config parsed from `registration_requests.json`
-
-#### Mode B — HTTP Blast
-
-Direct HTTP requests without a browser. Handles CAPTCHAs programmatically.
-
-**Concurrency:** `ThreadPoolExecutor` with default 50 workers, max 200.
-
-**Per-worker sequence:**
-1. Check if `registration_requests.json` exists → load endpoints; if not, auto-run discovery (one browser session to capture POST URLs and field names, saved to file)
-2. Create disposable mailbox via `temp_email.create_mailbox()`
-3. GET CoinGecko signup page → extract CSRF token
-4. Solve Cloudflare Turnstile via `captcha_solver.solve_turnstile()`
-5. POST email step to discovered endpoint
-6. Solve hCaptcha via `captcha_solver.solve_hcaptcha()`
-7. POST password step to discovered endpoint
-8. If `verify_email=True`: poll inbox → GET verification link
-9. Write to `bulk_accounts` table; emit SSE event; append to run log file
-
-**Auto-discovery:** On the first Mode B run, if `registration_requests.json` is missing, `_discover_endpoints()` launches a headless Camoufox browser, intercepts all POST requests during `coingecko.register()`, and saves them. Subsequent runs use the cached file. Delete `registration_requests.json` to force re-discovery.
-
-**Realistic throughput:** ~1 account / 30–60s per worker (dominated by captcha solve time). With 50 workers: ~50–100 accounts/minute.
-
-#### Mode C — Browser Pool
-
-Real Camoufox browser per worker. Stealth but heavier on RAM.
 
 **Concurrency:** `ThreadPoolExecutor` with default 5 workers, max 20. Each browser uses ~200–400 MB RAM.
 
 **Per-worker sequence:**
-1. Create disposable mailbox
-2. Launch headless Camoufox browser
-3. Call `coingecko.register(page, email, password)` — reuses existing automation code
-4. If `verify_email=True`: poll inbox → `coingecko.confirm_email()`
-5. Close browser
+1. Sleep a random stagger delay (`random.uniform(0, max_workers × 3)` seconds) to spread browser launches
+2. Create disposable mailbox via `temp_email.create_mailbox()`
+3. Launch **headless** Camoufox browser, call `coingecko.register(page, email, password)` — auto-handles CAPTCHAs. Retries once on failure with a 5–10 s pause
+4. Close browser immediately after registration (no browser held open during inbox wait)
+5. If `verify_email=True`: poll inbox → extract link → open new **headless** browser → `coingecko.confirm_email()`. Failure here saves as `unverified` (not `failed`)
 6. Write result to DB; emit SSE event; append to log
+
+**Realistic throughput:** ~1 account / 60–120s per worker (browser launch + CAPTCHA wait). With 5 workers running in parallel: ~3–5 accounts/minute.
 
 #### Step logging
 
-Both modes write granular per-step entries to `logs/bulk_run_<id>.txt` using `>` as separator (e.g., `[ts] email > Solving hCaptcha...`). Final result lines use `—` as separator (e.g., `[ts] email — verified`). The dashboard's Step Log panel reads this file every 2 seconds.
+Workers write granular per-step entries to `logs/bulk_run_<id>.txt` using `>` as separator (e.g., `[ts] email > Browser launched...`). Final result lines use `—` as separator (e.g., `[ts] email — verified`). The dashboard's Step Log panel reads this file every 2 seconds.
 
 #### Stop mechanism
 
-`POST /api/bulk-stop` sets the run's `threading.Event`. Workers check it before starting each new account and after completing `as_completed` futures. The executor is shut down with `shutdown(wait=False, cancel_futures=True)` for immediate cancellation.
+`POST /api/bulk-stop` sets the run's `threading.Event`. Workers check it before their stagger sleep and after completing their task. The executor is shut down with `shutdown(wait=False, cancel_futures=True)` to cancel any queued work immediately.
 
 #### Bulk accounts table (on `/bulk-register`)
 
-- **Pagination** — 25 / 50 / 100 accounts per page selector; Prev / Next buttons; pager row hidden when all results fit on one page. Filter changes (mode / status) reset to page 1.
+- **Pagination** — 25 / 50 / 100 accounts per page selector; Prev / Next buttons; pager row hidden when all results fit on one page. Filter by status resets to page 1.
 - **Select / Select All** — checkbox per row; header checkbox selects or deselects all rows on the current page (indeterminate when partially selected). Selections are preserved across page navigation and the 3-second polling refresh.
 - **Delete** — "Delete (N)" button shows the selection count; disabled when nothing is selected. Clicking confirms, then calls `POST /api/bulk-delete` with the selected IDs and reloads the table.
 - **Log panels** — two side-by-side panels in the progress area. **Live Events** (left) shows SSE summary events in real time; **Step Log** (right) polls `/api/bulk-log/<run_id>` every 2 seconds and shows granular per-step entries from the log file. Both panels have a **Clear** button in their header to wipe the display without affecting the underlying log file.
-- **Stats** — created count displayed in green, failed count in red, rate-limited count appended when non-zero.
+- **Stats** — created count displayed in green, failed count in red.
+- **Progress bar** — always shown, fills as accounts complete against the fixed target count.
 
 ---
 
@@ -359,11 +393,25 @@ python main.py --count 1
    └─ GET  <verification URL>       → confirms account
 
 7. coingecko.get_api_key()
-   └─ coingecko.login()
-   └─ GET  coingecko.com/en/api/pricing
-   └─ click "Get started for free" CTA
-   └─ fill demo account form (company name, use case)
-   └─ scan page DOM + HTML for CG-XXXXXXXXXXXXXXX key
+   └─ Navigate directly to API_DASH
+   └─ Re-login if redirected to auth page
+   └─ Scan dashboard for existing key → return immediately if found
+   └─ Check for onboarding modal → fill and continue
+   └─ Navigate to pricing page → click "Get started free" CTA
+   └─ Re-login if CTA redirects to auth
+   └─ Poll for Demo Account modal or key (up to 6 s)
+   └─ _fill_demo_account_modal():
+       ├─ Company name (random, e.g. "Nova Analytics")
+       ├─ Team size: "5"
+       ├─ Role: "Developer"
+       ├─ Use-case radio: Research
+       ├─ Referral radio: Word of mouth
+       ├─ Textarea: QA testing description
+       ├─ Tick all unchecked checkboxes
+       └─ Click "Create Demo Account" → "Create API Key"
+   └─ Poll for key after modal (up to 5 s)
+   └─ Final fallback: navigate to dashboard, poll + click "Create API Key" (up to 10 s)
+   └─ Save debug_api_dash.png and raise RuntimeError if key not found
 
 8. storage.save_account(email, password, api_key)
    └─ INSERT into accounts.db
@@ -413,17 +461,13 @@ python dashboard/app.py
 
 ```bash
 # All dependencies are already in requirements.txt
-# Set CAPTCHA credentials (required for Mode B HTTP Blast)
-set CAPTCHA_SERVICE=capsolver
-set CAPTCHA_API_KEY=your_api_key
+# No CAPTCHA API key needed — Camoufox handles challenges automatically
 
 # Launch the dashboard — navigate to /bulk-register
 python dashboard/app.py
 ```
 
-**Mode B first run:** When you start a Mode B run for the first time, a browser session launches automatically to discover CoinGecko's registration endpoints and save them to `registration_requests.json`. This takes 1–2 minutes. All subsequent runs use the cached file.
-
-**Mode C:** No extra setup needed — uses the existing Camoufox installation.
+No extra setup needed beyond the existing Camoufox installation. The live events panel shows `⏳ Initialising — launching N browser workers...` when a run starts so you know it's running.
 
 ---
 
@@ -435,23 +479,22 @@ qa api/
 ├── coingecko.py                 # All browser automation (register, login, get key)
 ├── temp_email.py                # Disposable mailbox via mail.tm API
 ├── storage.py                   # SQLite persistence (accounts.db + bulk tables)
-├── captcha_solver.py            # CapSolver / 2captcha integration
+├── captcha_solver.py            # CapSolver / 2captcha integration (optional, for main.py flow)
 ├── api_demo.py                  # CLI demo of CoinGecko API endpoints
 ├── accounts.db                  # SQLite database (auto-created on first run)
-├── registration_requests.json   # Captured Mode B endpoints (auto-created on first run)
 ├── requirements.txt             # Python dependencies
+├── scripts/
+│   └── discover_cg_registration.py  # Standalone registration analysis tool
 ├── dashboard/
-│   ├── app.py                   # Flask web dashboard + bulk register routes
-│   ├── bulk_register.py         # Mode B (HTTP) + Mode C (browser) worker logic
+│   ├── app.py                   # Flask web dashboard + all API routes
+│   ├── bulk_register.py         # Browser pool worker logic (headless Camoufox, no CAPTCHA key needed)
 │   └── templates/
 │       ├── index.html           # Main dashboard (API keys, passwords, usage)
 │       ├── bulk_register.html   # Bulk registration stress-test page
 │       ├── search.html          # Coin search page
-│       └── backtest.html        # Strategy backtesting page
+│       └── backtest.html        # Strategy backtesting page (Buy & Hold, SMA, RSI)
 ├── logs/
 │   └── bulk_run_<id>.txt        # Per-run step logs (auto-created)
-├── scripts/
-│   └── discover_cg_registration.py  # Manual endpoint discovery (runs automatically now)
 ├── tests/
 │   ├── test_bulk_storage.py     # Storage layer unit tests
 │   └── test_bulk_routes.py      # Flask route tests
@@ -469,16 +512,15 @@ qa api/
 |---|---|---|
 | [mail.tm](https://mail.tm) | Disposable email inboxes | Free |
 | [CoinGecko](https://coingecko.com) | Account registration & API keys | Free (demo tier) |
-| [CapSolver](https://capsolver.com) | CAPTCHA solving (optional) | Paid |
-| [2captcha](https://2captcha.com) | CAPTCHA solving (optional) | Paid |
+| [CapSolver](https://capsolver.com) | CAPTCHA solving (optional, for `main.py` only) | Paid |
+| [2captcha](https://2captcha.com) | CAPTCHA solving (optional, for `main.py` only) | Paid |
 
 ---
 
 ## Important Notes
 
-- `main.py` runs the browser **headful** (visible window) by default. Bulk Register Mode C uses headless Camoufox — this is intentional since bulk runs don't need to be observed.
-- `accounts.db`, `registration_requests.json`, and `logs/` may contain generated emails, passwords, and API keys — treat them as secret files and do not commit them to public repositories.
+- `main.py` runs the browser **headful** (visible window) by default. Bulk registration uses **headless** Camoufox — this is intentional since bulk runs don't need to be observed.
+- `accounts.db` and `logs/` may contain generated emails, passwords, and API keys — treat them as secret files and do not commit them to public repositories.
 - Each CoinGecko demo API key has a **10,000 calls/month** free limit. Usage is tracked locally and can be synced from CoinGecko's `GET /key` endpoint via the dashboard's sync button or the `↻` row button. If `GET /key` returns 401/403 (Pro subscription required), the dashboard falls back to local counts only.
 - All account creation and key generation scripts call **live external services**. Only run them when you have explicit authorization to do so.
-- **Mode B auto-discovery**: On the first Mode B run, a browser session is launched automatically to capture CoinGecko's registration endpoints (costs ~2 captcha solves). This only happens once — `registration_requests.json` is reused on all subsequent runs. Delete this file to force re-discovery if the registration flow changes.
-- **CAPTCHA costs**: Mode B requires two captcha solves per account (Turnstile + hCaptcha). At CapSolver rates, expect ~$0.0018 per account. Set `CAPTCHA_SERVICE` and `CAPTCHA_API_KEY` env vars before running Mode B.
+- **No CAPTCHA costs for bulk registration**: The Camoufox browser fingerprint is clean enough to auto-pass Cloudflare Turnstile and hCaptcha without a paid CAPTCHA service. `captcha_solver.py` is only used by `main.py` (single-account flow) and is optional there too.
