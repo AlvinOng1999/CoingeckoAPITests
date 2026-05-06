@@ -17,11 +17,33 @@ app = Flask(__name__)
 CG_BASE = "https://api.coingecko.com/api/v3"
 
 def _local_usage(api_key: str):
-    """CoinGecko /key is PRO-only. Returns locally-tracked (used, left) from DB."""
     for a in storage.get_all_accounts():
         if a["api_key"] == api_key:
             return a["calls_used"], a["calls_left"]
     return 0, 10000
+
+
+def _try_sync_key(api_key: str) -> dict | None:
+    """
+    Calls CoinGecko GET /key to fetch real monthly usage and writes it to the DB.
+    Returns {"calls_used": N, "calls_left": N} on success, None if unavailable.
+    """
+    try:
+        r = requests.get(
+            f"{CG_BASE}/key",
+            headers={"x-cg-demo-api-key": api_key},
+            timeout=8,
+        )
+        if r.ok:
+            d = r.json()
+            used   = int(d.get("current_total_monthly_calls", 0))
+            credit = int(d.get("monthly_call_credit", 10000))
+            left   = int(d.get("current_remaining_monthly_calls", max(0, credit - used)))
+            storage.update_usage(api_key, used, left)
+            return {"calls_used": used, "calls_left": left}
+        return None
+    except Exception:
+        return None
 
 
 @app.route("/")
@@ -35,12 +57,36 @@ def index():
 
 @app.route("/refresh/<api_key>", methods=["POST"])
 def refresh(api_key):
+    _try_sync_key(api_key)
     return redirect(url_for("index"))
 
 
 @app.route("/refresh-all", methods=["POST"])
 def refresh_all():
+    for acc in storage.get_all_accounts():
+        _try_sync_key(acc["api_key"])
     return redirect(url_for("index"))
+
+
+@app.route("/api/sync-all", methods=["POST"])
+def api_sync_all():
+    accounts = storage.get_all_accounts()
+    synced = 0
+    keys = []
+    for acc in accounts:
+        result = _try_sync_key(acc["api_key"])
+        if result:
+            synced += 1
+            keys.append({"id": acc["id"], "synced": True, **result})
+        else:
+            keys.append({"id": acc["id"], "synced": False,
+                         "calls_used": acc["calls_used"], "calls_left": acc["calls_left"]})
+    return jsonify({
+        "synced": synced,
+        "total": len(accounts),
+        "pro_required": synced == 0 and len(accounts) > 0,
+        "keys": keys,
+    })
 
 
 @app.route("/create", methods=["POST"])
@@ -174,12 +220,15 @@ def api_markets():
 
 @app.route("/api/debug-key")
 def api_debug_key():
-    """Shows local DB usage (CoinGecko /key is PRO-only for Demo keys)."""
     account = storage.get_active_account()
     if not account:
         return jsonify({"error": "No active account"}), 503
+    synced = _try_sync_key(account["api_key"])
+    if synced:
+        return jsonify({"source": "coingecko", **synced, "api_key": account["api_key"][:12] + "••••"})
     return jsonify({
-        "note": "CoinGecko /key is PRO-only — usage is tracked locally",
+        "source": "local",
+        "note": "GET /key unavailable — returning locally-tracked counts",
         "api_key": account["api_key"][:12] + "••••",
         "calls_used": account["calls_used"],
         "calls_left": account["calls_left"],

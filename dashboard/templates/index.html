@@ -316,6 +316,12 @@
     </div>
   </div>
 
+  <!-- Usage sync bar -->
+  <div class="d-flex align-items-center gap-3 mb-4 ms-1" style="font-size:.8rem;">
+    <span id="sync-status" style="color:#aaa">Usage is locally tracked — may differ from CoinGecko if the key is used elsewhere.</span>
+    <button id="btn-sync-all" onclick="syncAll()" style="background:none;border:none;color:#0d6efd;font-size:.8rem;cursor:pointer;padding:0;white-space:nowrap">↻ Sync from CoinGecko</button>
+  </div>
+
   <!-- Global Market -->
   <div class="card rounded-3 mb-4">
     <div class="section-header">
@@ -963,6 +969,28 @@ async function loadUsageStats() {
       if (elPct)  elPct.textContent = pct + "% used";
     });
   } catch (_) {}
+}
+
+async function syncAll() {
+  const btn    = document.getElementById('btn-sync-all');
+  const status = document.getElementById('sync-status');
+  btn.disabled = true;
+  btn.textContent = '↻ Syncing…';
+  try {
+    const d = await fetch('/api/sync-all', { method: 'POST' }).then(r => r.json());
+    if (d.pro_required) {
+      status.innerHTML = '<span style="color:#dc3545">⚠ GET /key requires a Pro subscription — keeping local counts.</span>';
+    } else if (d.synced > 0) {
+      status.innerHTML = '<span style="color:#16a34a">✓ Synced ' + d.synced + ' of ' + d.total + ' key(s) from CoinGecko.</span>';
+      await loadUsageStats();
+    } else {
+      status.innerHTML = '<span style="color:#dc3545">Sync failed — check network or API key.</span>';
+    }
+  } catch (_) {
+    status.innerHTML = '<span style="color:#dc3545">Sync request failed.</span>';
+  }
+  btn.disabled = false;
+  btn.textContent = '↻ Sync from CoinGecko';
 }
 
 // ── Stress test ────────────────────────────────────────────────────────────────
