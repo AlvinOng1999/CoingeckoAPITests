@@ -7,6 +7,8 @@ import sys
 import json
 import time
 import threading
+import re
+import requests as _req
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import storage
@@ -119,14 +121,13 @@ def run_mode_c(run_id: int, target_count, run_forever: bool,
     stop_event = _STOP_EVENTS.get(run_id, threading.Event())
     done = 0
     errors = 0
-    batch = 0
 
     while True:
-        batch += 1
         count = target_count if not run_forever else 50  # 50 per loop iteration
 
         futures_map = {}
-        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        pool = ThreadPoolExecutor(max_workers=max_workers)
+        try:
             for _ in range(count):
                 if stop_event.is_set():
                     break
@@ -135,9 +136,12 @@ def run_mode_c(run_id: int, target_count, run_forever: bool,
 
             for future in as_completed(futures_map):
                 if stop_event.is_set():
+                    pool.shutdown(wait=False, cancel_futures=True)
                     break
                 email, _pw, status, err = future.result()
-                if status in ("verified", "unverified"):
+                if status == "stopped":
+                    continue
+                elif status in ("verified", "unverified"):
                     done += 1
                     storage.increment_bulk_run_counts(run_id, created=1)
                 else:
@@ -146,6 +150,8 @@ def run_mode_c(run_id: int, target_count, run_forever: bool,
 
                 total_display = None if run_forever else target_count
                 yield _make_event(run_id, done, total_display, email, status, errors)
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
 
         if stop_event.is_set() or not run_forever:
             break
@@ -153,9 +159,6 @@ def run_mode_c(run_id: int, target_count, run_forever: bool,
     storage.update_bulk_run_status(run_id, "done" if not stop_event.is_set() else "stopped")
     yield _make_event(run_id, done, target_count, "", "complete", errors, complete=True)
 
-
-import re
-import requests as _req
 
 # ── Mode B constants (update based on scripts/discover_cg_registration.py output) ──
 _CG_EMAIL_POST_URL    = "https://www.coingecko.com/en/users"
@@ -189,7 +192,6 @@ def _mode_b_worker(run_id: int, verify_email: bool, stop_event: threading.Event)
 
     email = ""
     password = ""
-    mailbox = {}
     try:
         mailbox = temp_email.create_mailbox()
         email = mailbox["address"]
@@ -306,7 +308,8 @@ def run_mode_b(run_id: int, target_count, run_forever: bool,
         count = target_count if not run_forever else 200
 
         futures_map = {}
-        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        pool = ThreadPoolExecutor(max_workers=max_workers)
+        try:
             for _ in range(count):
                 if stop_event.is_set():
                     break
@@ -315,11 +318,14 @@ def run_mode_b(run_id: int, target_count, run_forever: bool,
 
             for future in as_completed(futures_map):
                 if stop_event.is_set():
+                    pool.shutdown(wait=False, cancel_futures=True)
                     break
                 email, _pw, status, err = future.result()
                 if "rate" in err.lower() or "429" in err:
                     rate_limited += 1
-                if status in ("verified", "unverified"):
+                if status == "stopped":
+                    continue
+                elif status in ("verified", "unverified"):
                     done += 1
                     storage.increment_bulk_run_counts(run_id, created=1)
                 else:
@@ -329,6 +335,8 @@ def run_mode_b(run_id: int, target_count, run_forever: bool,
                 total_display = None if run_forever else target_count
                 yield _make_event(run_id, done, total_display, email, status,
                                   errors, rate_limited)
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
 
         if stop_event.is_set() or not run_forever:
             break

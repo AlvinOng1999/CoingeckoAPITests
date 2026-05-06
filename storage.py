@@ -5,7 +5,9 @@ DB_PATH = os.path.join(os.path.dirname(__file__), "accounts.db")
 
 
 def _conn():
-    return sqlite3.connect(DB_PATH)
+    con = sqlite3.connect(DB_PATH, timeout=30)
+    con.execute("PRAGMA journal_mode=WAL")
+    return con
 
 
 def init_db():

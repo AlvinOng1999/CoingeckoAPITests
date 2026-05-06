@@ -497,18 +497,7 @@ def api_bulk_start():
     max_workers = min(max_workers, 200 if mode == "http" else 20)
 
     run_id = bulk_register.start_run(mode, None if run_forever else count, run_forever, verify)
-
-    def _run():
-        gen = (bulk_register.run_mode_b if mode == "http" else bulk_register.run_mode_c)(
-            run_id, count, run_forever, verify, max_workers
-        )
-        for _ in gen:
-            pass
-
-    t = threading.Thread(target=_run, daemon=True)
-    t.start()
-
-    return jsonify({"run_id": run_id, "mode": mode})
+    return jsonify({"run_id": run_id, "mode": mode, "max_workers": max_workers})
 
 
 @app.route("/api/bulk-stop", methods=["POST"])
@@ -531,13 +520,16 @@ def api_bulk_stream(run_id):
     run_forever = bool(run["run_forever"])
     verify      = bool(run["verify_email"])
     count       = run["target_count"]
+    max_workers = request.args.get("max_workers", type=int,
+                                   default=50 if mode == "http" else 5)
+    max_workers = min(max_workers, 200 if mode == "http" else 20)
 
     stop_event = bulk_register._STOP_EVENTS.get(run_id, threading.Event())
     bulk_register._STOP_EVENTS[run_id] = stop_event
 
     def generate():
         gen = (bulk_register.run_mode_b if mode == "http" else bulk_register.run_mode_c)(
-            run_id, count, run_forever, verify
+            run_id, count, run_forever, verify, max_workers
         )
         for event in gen:
             yield event

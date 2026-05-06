@@ -214,7 +214,7 @@ async function startRun() {
   document.getElementById('prog-label').textContent = 'Run #' + currentRunId + ' in progress';
   document.getElementById('log-feed').innerHTML = '';
 
-  sseSource = new EventSource('/api/bulk-stream/' + currentRunId);
+  sseSource = new EventSource('/api/bulk-stream/' + currentRunId + '?max_workers=' + workers);
   sseSource.onmessage = function(e) {
     const d = JSON.parse(e.data);
     updateProgress(d);
