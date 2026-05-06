@@ -46,6 +46,8 @@
     .prog-stats { font-size: .82rem; color: #888; }
     .prog-bar-wrap { background: #f0f0f0; border-radius: 6px; height: 8px; margin-bottom: 14px; }
     .prog-bar-fill { background: #000; height: 8px; border-radius: 6px; width: 0%; transition: width .3s; }
+    .log-panels { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .log-panel-label { font-size: .72rem; font-weight: 600; color: #666; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 4px; }
     .log-feed { background: #1a1a1a; border-radius: 8px; padding: 12px 14px; font-family: monospace; font-size: .78rem; color: #aaa; height: 150px; overflow-y: auto; }
     .log-ok { color: #4ade80; }
     .log-err { color: #f87171; }
@@ -140,7 +142,16 @@
     <div class="prog-bar-wrap" id="prog-bar-wrap">
       <div class="prog-bar-fill" id="prog-bar"></div>
     </div>
-    <div class="log-feed" id="log-feed"></div>
+    <div class="log-panels">
+      <div>
+        <div class="log-panel-label">Live Events</div>
+        <div class="log-feed" id="log-feed"></div>
+      </div>
+      <div>
+        <div class="log-panel-label">Step Log</div>
+        <div class="log-feed" id="step-log"></div>
+      </div>
+    </div>
   </div>
 
   <div class="tbl-panel">
@@ -172,6 +183,7 @@ let currentMode = 'http';
 let currentRunId = null;
 let sseSource = null;
 let pollInterval = null;
+let stepLogInterval = null;
 
 function switchMode(mode) {
   currentMode = mode;
@@ -213,6 +225,7 @@ async function startRun() {
   document.getElementById('prog-panel').style.display = 'block';
   document.getElementById('prog-label').textContent = 'Run #' + currentRunId + ' in progress';
   document.getElementById('log-feed').innerHTML = '';
+  document.getElementById('step-log').innerHTML = '';
 
   sseSource = new EventSource('/api/bulk-stream/' + currentRunId + '?max_workers=' + workers);
   sseSource.onmessage = function(e) {
@@ -222,6 +235,7 @@ async function startRun() {
   };
 
   pollInterval = setInterval(loadAccounts, 3000);
+  stepLogInterval = setInterval(loadStepLog, 2000);
 }
 
 function updateProgress(d) {
@@ -252,7 +266,9 @@ function onRunComplete() {
   document.getElementById('btn-stop').disabled = true;
   document.getElementById('prog-label').textContent = 'Run #' + currentRunId + ' — complete';
   clearInterval(pollInterval);
+  clearInterval(stepLogInterval);
   loadAccounts();
+  loadStepLog();
 }
 
 async function stopRun() {
@@ -264,10 +280,12 @@ async function stopRun() {
   });
   if (sseSource) sseSource.close();
   clearInterval(pollInterval);
+  clearInterval(stepLogInterval);
   document.getElementById('btn-start').disabled = false;
   document.getElementById('btn-stop').disabled = true;
   document.getElementById('prog-label').textContent = 'Run #' + currentRunId + ' — stopped';
   loadAccounts();
+  loadStepLog();
 }
 
 function statusBadge(s) {
@@ -289,6 +307,20 @@ function relTime(ts) {
   if (diff < 60) return 'just now';
   if (diff < 3600) return Math.floor(diff/60) + 'm ago';
   return Math.floor(diff/3600) + 'h ago';
+}
+
+async function loadStepLog() {
+  if (!currentRunId) return;
+  const resp = await fetch('/api/bulk-log/' + currentRunId);
+  const data = await resp.json();
+  const feed = document.getElementById('step-log');
+  if (!data.lines || !data.lines.length) return;
+  feed.innerHTML = data.lines.map(function(l) {
+    const isStep = l.includes(' > ');
+    const cls = isStep ? 'log-info' : l.includes('failed') ? 'log-err' : 'log-ok';
+    return '<div class="' + cls + '">' + l.replace(/</g, '&lt;') + '</div>';
+  }).join('');
+  feed.scrollTop = feed.scrollHeight;
 }
 
 async function loadAccounts() {

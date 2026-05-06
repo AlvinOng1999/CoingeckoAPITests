@@ -623,6 +623,16 @@ def api_bulk_export():
                      mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
+@app.route("/api/bulk-log/<int:run_id>")
+def api_bulk_log(run_id):
+    log_path = os.path.join(os.path.dirname(__file__), "..", "logs", f"bulk_run_{run_id}.txt")
+    if not os.path.exists(log_path):
+        return jsonify({"lines": []})
+    with open(log_path, encoding="utf-8") as f:
+        lines = f.readlines()
+    return jsonify({"lines": [l.rstrip() for l in lines[-200:]]})
+
+
 if __name__ == "__main__":
     print("Dashboard running at http://localhost:5000")
     app.run(debug=False, port=5000, threaded=True)

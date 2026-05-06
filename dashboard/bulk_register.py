@@ -47,6 +47,13 @@ def _append_log(run_id: int, email: str, status: str, error: str = ""):
         f.write(line + "\n")
 
 
+def _step_log(run_id: int, email: str, msg: str):
+    ts = time.strftime("%Y-%m-%d %H:%M:%S")
+    log_path = os.path.join(_log_dir(), f"bulk_run_{run_id}.txt")
+    with open(log_path, "a", encoding="utf-8") as f:
+        f.write(f"[{ts}] {email} > {msg}\n")
+
+
 def _sse(data: dict) -> str:
     return f"data: {json.dumps(data)}\n\n"
 
@@ -81,19 +88,26 @@ def _mode_c_worker(run_id: int, verify_email: bool, stop_event: threading.Event)
     email = ""
     password = ""
     try:
+        _step_log(run_id, "—", "Creating disposable mailbox...")
         mailbox = temp_email.create_mailbox()
         email = mailbox["address"]
         password = mailbox["cg_password"]
+        _step_log(run_id, email, "Mailbox ready — launching Camoufox browser...")
 
         with Camoufox(headless=True, geoip=True) as browser:
             page = browser.new_page()
+            _step_log(run_id, email, "Browser launched — running registration flow...")
             coingecko.register(page, email, password)
+            _step_log(run_id, email, "Registration form submitted")
 
             if verify_email and not stop_event.is_set():
+                _step_log(run_id, email, "Polling inbox for verification email...")
                 body = temp_email.poll_inbox(mailbox["token"], timeout=120)
                 link = temp_email.extract_verification_link(body)
+                _step_log(run_id, email, "Verification link found — confirming email...")
                 coingecko.confirm_email(page, link, password)
                 status = "verified"
+                _step_log(run_id, email, "Email confirmed")
             else:
                 status = "unverified"
 
@@ -160,7 +174,117 @@ def run_mode_c(run_id: int, target_count, run_forever: bool,
     yield _make_event(run_id, done, target_count, "", "complete", errors, complete=True)
 
 
-# ── Mode B constants (update based on scripts/discover_cg_registration.py output) ──
+# ── Endpoint discovery (auto-runs once if registration_requests.json is missing) ──
+
+_ENDPOINTS_FILE = os.path.join(os.path.dirname(__file__), "..", "registration_requests.json")
+_ENDPOINTS_LOCK = threading.Lock()
+_endpoints_cache = None  # type: dict | None
+
+
+def _parse_endpoints_from_captured(captured: list) -> dict:
+    from urllib.parse import parse_qs
+
+    result = {
+        "email_post_url": "https://www.coingecko.com/en/users",
+        "password_post_url": "https://www.coingecko.com/en/users",
+        "email_field": "user[email]",
+        "password_field": "user[password]",
+        "password_confirm_field": "user[password_confirmation]",
+        "turnstile_field": "cf-turnstile-response",
+        "hcaptcha_field": "response_token",
+    }
+    for req in captured:
+        raw = req.get("post_data") or ""
+        ct = req.get("content_type", "")
+        url = req.get("url", "")
+        try:
+            if "application/json" in ct:
+                body = json.loads(raw)
+                keys = set(body.keys()) if isinstance(body, dict) else set()
+            else:
+                keys = set(parse_qs(raw, keep_blank_values=True).keys())
+        except Exception:
+            continue
+
+        email_keys = [k for k in keys if "email" in k.lower() and "confirm" not in k.lower()]
+        pass_keys = [k for k in keys if "password" in k.lower() and "confirm" not in k.lower()]
+        pass_conf_keys = [k for k in keys if "password" in k.lower() and "confirm" in k.lower()]
+
+        if email_keys:
+            result["email_post_url"] = url
+            result["email_field"] = email_keys[0]
+            for k in keys:
+                if "turnstile" in k.lower() or (k.startswith("cf-") and "response" in k.lower()):
+                    result["turnstile_field"] = k
+
+        if pass_keys:
+            result["password_post_url"] = url
+            result["password_field"] = pass_keys[0]
+            if pass_conf_keys:
+                result["password_confirm_field"] = pass_conf_keys[0]
+            for k in keys:
+                if ("response" in k.lower() or "token" in k.lower()) \
+                        and "authenticity" not in k.lower() and "email" not in k.lower():
+                    result["hcaptcha_field"] = k
+    return result
+
+
+def _discover_endpoints() -> dict:
+    """Runs a real browser registration to capture endpoints. Called once, result cached in file."""
+    from camoufox.sync_api import Camoufox
+    import temp_email
+    import coingecko
+
+    captured: list = []
+    mailbox = temp_email.create_mailbox()
+
+    try:
+        with Camoufox(headless=True, geoip=True) as browser:
+            page = browser.new_page()
+
+            def _on_req(r):
+                if "coingecko.com" in r.url and r.method in ("POST", "PUT", "PATCH"):
+                    captured.append({
+                        "url": r.url,
+                        "method": r.method,
+                        "content_type": r.headers.get("content-type", ""),
+                        "post_data": r.post_data,
+                    })
+
+            page.on("request", _on_req)
+            coingecko.register(page, mailbox["address"], mailbox["cg_password"])
+    except Exception:
+        pass
+
+    try:
+        with open(_ENDPOINTS_FILE, "w", encoding="utf-8") as f:
+            json.dump(captured, f, indent=2)
+    except Exception:
+        pass
+
+    return _parse_endpoints_from_captured(captured)
+
+
+def _load_endpoints() -> dict:
+    """Return endpoint config, loading from registration_requests.json or auto-discovering."""
+    global _endpoints_cache
+    if _endpoints_cache is not None:
+        return _endpoints_cache
+    with _ENDPOINTS_LOCK:
+        if _endpoints_cache is not None:
+            return _endpoints_cache
+        if os.path.exists(_ENDPOINTS_FILE):
+            try:
+                with open(_ENDPOINTS_FILE, encoding="utf-8") as f:
+                    _endpoints_cache = _parse_endpoints_from_captured(json.load(f))
+                return _endpoints_cache
+            except Exception:
+                pass
+        _endpoints_cache = _discover_endpoints()
+        return _endpoints_cache
+
+
+# ── Mode B constants (fallback defaults — overridden by registration_requests.json) ──
 _CG_EMAIL_POST_URL    = "https://www.coingecko.com/en/users"
 _CG_PASSWORD_POST_URL = "https://www.coingecko.com/en/users"
 _EMAIL_FIELD          = "user[email]"
@@ -193,9 +317,12 @@ def _mode_b_worker(run_id: int, verify_email: bool, stop_event: threading.Event)
     email = ""
     password = ""
     try:
+        ep = _load_endpoints()
+        _step_log(run_id, "—", "Creating disposable mailbox...")
         mailbox = temp_email.create_mailbox()
         email = mailbox["address"]
         password = mailbox["cg_password"]
+        _step_log(run_id, email, "Mailbox ready")
 
         session = _req.Session()
         session.headers.update({
@@ -208,23 +335,24 @@ def _mode_b_worker(run_id: int, verify_email: bool, stop_event: threading.Event)
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         })
 
-        # Step 1: GET signup page → extract CSRF token + set cookies
+        _step_log(run_id, email, "Loading signup page + extracting CSRF...")
         resp = session.get(SIGNUP_URL, timeout=15)
         resp.raise_for_status()
         csrf = _extract_csrf(resp.text)
 
-        # Step 2: Solve Cloudflare Turnstile
+        _step_log(run_id, email, "Solving Cloudflare Turnstile...")
         ts_token = captcha_solver.solve_turnstile(HOMEPAGE)
         if not ts_token:
             raise RuntimeError("Turnstile solve returned None — check CAPTCHA_API_KEY")
+        _step_log(run_id, email, "Turnstile solved")
 
-        # Step 3: POST email step
+        _step_log(run_id, email, f"POSTing email step to {ep['email_post_url']}...")
         resp = session.post(
-            _CG_EMAIL_POST_URL,
+            ep["email_post_url"],
             data={
                 "authenticity_token": csrf,
-                _EMAIL_FIELD: email,
-                _TURNSTILE_FIELD: ts_token,
+                ep["email_field"]: email,
+                ep["turnstile_field"]: ts_token,
             },
             headers={
                 "X-CSRF-Token": csrf,
@@ -234,29 +362,30 @@ def _mode_b_worker(run_id: int, verify_email: bool, stop_event: threading.Event)
             timeout=15,
             allow_redirects=True,
         )
+        _step_log(run_id, email, f"Email step → HTTP {resp.status_code}")
         if resp.status_code == 429:
             raise RuntimeError("Rate limited by CoinGecko (429)")
         if resp.status_code not in (200, 201, 302, 422):
             raise RuntimeError(f"Email POST returned {resp.status_code}")
 
-        # Refresh CSRF from response page (Rails rotates it after each request)
         new_csrf = _extract_csrf(resp.text)
         if new_csrf:
             csrf = new_csrf
 
-        # Step 4: Solve hCaptcha
+        _step_log(run_id, email, "Solving hCaptcha...")
         hc_token = captcha_solver.solve_hcaptcha(HOMEPAGE)
         if not hc_token:
             raise RuntimeError("hCaptcha solve returned None — check CAPTCHA_API_KEY")
+        _step_log(run_id, email, "hCaptcha solved")
 
-        # Step 5: POST password step
+        _step_log(run_id, email, f"POSTing password step to {ep['password_post_url']}...")
         resp = session.post(
-            _CG_PASSWORD_POST_URL,
+            ep["password_post_url"],
             data={
                 "authenticity_token": csrf,
-                _PASSWORD_FIELD: password,
-                _PASSWORD_CONF_FIELD: password,
-                _HCAPTCHA_FIELD: hc_token,
+                ep["password_field"]: password,
+                ep["password_confirm_field"]: password,
+                ep["hcaptcha_field"]: hc_token,
             },
             headers={
                 "X-CSRF-Token": csrf,
@@ -266,15 +395,18 @@ def _mode_b_worker(run_id: int, verify_email: bool, stop_event: threading.Event)
             timeout=15,
             allow_redirects=True,
         )
+        _step_log(run_id, email, f"Password step → HTTP {resp.status_code}")
         if resp.status_code == 429:
             raise RuntimeError("Rate limited by CoinGecko (429)")
 
-        # Step 6: Optional email verification
         if verify_email and not stop_event.is_set():
+            _step_log(run_id, email, "Polling inbox for verification email...")
             body = temp_email.poll_inbox(mailbox["token"], timeout=120)
             link = temp_email.extract_verification_link(body)
+            _step_log(run_id, email, "Verification link found — clicking...")
             session.get(link, timeout=15)
             status = "verified"
+            _step_log(run_id, email, "Verified")
         else:
             status = "unverified"
 
