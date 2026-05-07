@@ -1,4 +1,12 @@
-playwright==1.44.0
+# ── Setup (run once) ────────────────────────────────────────────────────────
+#   Windows:  setup.bat
+#   Manual:   python -m venv venv
+#             .\venv\Scripts\Activate.ps1
+#             python -m pip install -r requirements.txt
+#             python -m playwright install
+# ────────────────────────────────────────────────────────────────────────────
+
+playwright>=1.45.0
 requests==2.32.3
 Flask==3.0.3
 rich==13.7.1
