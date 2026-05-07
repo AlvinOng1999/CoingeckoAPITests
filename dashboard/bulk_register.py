@@ -161,6 +161,7 @@ def _worker(run_id: int, verify_email: bool, stop_event: threading.Event,
         except Exception as exc:
             last_err = _clean_error(exc)
             label = email or "—"
+            print(f"[bulk] attempt {attempt}/{MAX_ATTEMPTS} failed ({label}): {last_err}")
             _step_log(run_id, label, f"Attempt {attempt}/{MAX_ATTEMPTS} failed: {last_err}")
             if attempt == MAX_ATTEMPTS:
                 if email:
@@ -194,15 +195,27 @@ def run_bulk(run_id: int, target_count: int, verify_email: bool, max_workers: in
             if stop_event.is_set():
                 pool.shutdown(wait=False, cancel_futures=True)
                 break
-            email, _pw, status, err = future.result()
+            if future.cancelled():
+                continue
+            try:
+                email, _pw, status, err = future.result()
+            except Exception as fut_exc:
+                err = _clean_error(fut_exc)
+                print(f"[bulk] worker raised unexpected exception: {err}")
+                errors += 1
+                storage.increment_bulk_run_counts(run_id, failed=1)
+                yield _make_event(run_id, done, target_count, "", "failed", errors)
+                continue
             if status == "stopped":
                 continue
             elif status in ("verified", "unverified"):
                 done += 1
                 storage.increment_bulk_run_counts(run_id, created=1)
+                print(f"[bulk] ✓ created {email} ({status}) — {done}/{target_count}")
             else:
                 errors += 1
                 storage.increment_bulk_run_counts(run_id, failed=1)
+                print(f"[bulk] ✗ failed {email or '(no email)'}: {err}")
 
             yield _make_event(run_id, done, target_count, email, status, errors)
     finally:
