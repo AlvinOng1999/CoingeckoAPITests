@@ -90,6 +90,7 @@ def _worker(run_id: int, verify_email: bool, stop_event: threading.Event,
             stagger_delay: float = 0.0):
     """
     Creates one CoinGecko account using a real Camoufox browser.
+    Retries the full mailbox + registration flow up to MAX_ATTEMPTS times.
     Returns (email, password, status, error_str).
     """
     from camoufox.sync_api import Camoufox
@@ -102,66 +103,72 @@ def _worker(run_id: int, verify_email: bool, stop_event: threading.Event,
     if stop_event.is_set():
         return "", "", "stopped", ""
 
-    email = ""
-    password = ""
-    try:
-        _step_log(run_id, "—", "Creating disposable mailbox...")
-        with _MAILBOX_SEM:
-            mailbox = temp_email.create_mailbox()
-        email = mailbox["address"]
-        password = mailbox["cg_password"]
+    MAX_ATTEMPTS = 3
+    last_err = ""
+    final_email = ""
+    final_password = ""
 
-        # ── Step 1: Register (with one retry on transient failures) ─────────────
-        reg_exc = None
-        for attempt in range(2):
-            try:
-                _step_log(run_id, email,
-                          "Launching browser..." if attempt == 0
-                          else f"Retrying registration (attempt {attempt + 1})...")
-                with Camoufox(headless=True, geoip=True) as browser:
-                    page = browser.new_page()
-                    coingecko.register(page, email, password)
-                _step_log(run_id, email, "Registration submitted — browser closed")
-                reg_exc = None
-                break
-            except Exception as e:
-                reg_exc = e
-                _step_log(run_id, email, f"Registration attempt {attempt + 1} failed: {e}")
-                if attempt == 0:
-                    time.sleep(random.uniform(5, 10))
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        if stop_event.is_set():
+            return "", "", "stopped", ""
 
-        if reg_exc:
-            raise reg_exc
+        email = ""
+        password = ""
+        try:
+            if attempt > 1:
+                backoff = random.uniform(10, 20) * (attempt - 1)
+                _step_log(run_id, "—",
+                          f"Retrying (attempt {attempt}/{MAX_ATTEMPTS}) after {backoff:.0f}s backoff...")
+                time.sleep(backoff)
 
-        # ── Step 2: Poll inbox (no browser held open during the wait) ───────────
-        status = "unverified"
-        if verify_email and not stop_event.is_set():
-            try:
-                _step_log(run_id, email, "Polling inbox for verification email...")
-                body = temp_email.poll_inbox(mailbox["token"], timeout=180)
-                link = temp_email.extract_verification_link(body)
-                _step_log(run_id, email, "Verification link found — confirming email...")
-                with Camoufox(headless=True, geoip=True) as browser:
-                    page = browser.new_page()
-                    coingecko.confirm_email(page, link, password)
-                status = "verified"
-                _step_log(run_id, email, "Email confirmed")
-            except Exception as verify_exc:
-                status = "unverified"
-                _step_log(run_id, email, f"Verification skipped (saved as unverified): {verify_exc}")
+            # ── Step 1: Fresh mailbox for every attempt ──────────────────────────
+            _step_log(run_id, "—", "Creating disposable mailbox...")
+            with _MAILBOX_SEM:
+                mailbox = temp_email.create_mailbox()
+            email = mailbox["address"]
+            password = mailbox["cg_password"]
+            final_email = email
+            final_password = password
 
-        storage.save_bulk_account(run_id, email, password, status)
-        _append_log(run_id, email, status)
-        return email, password, status, ""
+            # ── Step 2: Register ─────────────────────────────────────────────────
+            _step_log(run_id, email, f"Launching browser (attempt {attempt}/{MAX_ATTEMPTS})...")
+            with Camoufox(headless=True, geoip=True) as browser:
+                page = browser.new_page()
+                coingecko.register(page, email, password)
+            _step_log(run_id, email, "Registration submitted — browser closed")
 
-    except Exception as exc:
-        err = _clean_error(exc)
-        label = email or "—"
-        _step_log(run_id, label, f"FAILED: {err}")
-        if email:
-            storage.save_bulk_account(run_id, email, password, "failed", err)
-        _append_log(run_id, label, "failed", err)
-        return email, password, "failed", err
+            # ── Step 3: Email verification (soft failure — no retry) ─────────────
+            status = "unverified"
+            if verify_email and not stop_event.is_set():
+                try:
+                    _step_log(run_id, email, "Polling inbox for verification email...")
+                    body = temp_email.poll_inbox(mailbox["token"], timeout=180)
+                    link = temp_email.extract_verification_link(body)
+                    _step_log(run_id, email, "Verification link found — confirming email...")
+                    with Camoufox(headless=True, geoip=True) as browser:
+                        page = browser.new_page()
+                        coingecko.confirm_email(page, link, password)
+                    status = "verified"
+                    _step_log(run_id, email, "Email confirmed")
+                except Exception as verify_exc:
+                    status = "unverified"
+                    _step_log(run_id, email,
+                              f"Verification skipped (saved as unverified): {_clean_error(verify_exc)}")
+
+            storage.save_bulk_account(run_id, email, password, status)
+            _append_log(run_id, email, status)
+            return email, password, status, ""
+
+        except Exception as exc:
+            last_err = _clean_error(exc)
+            label = email or "—"
+            _step_log(run_id, label, f"Attempt {attempt}/{MAX_ATTEMPTS} failed: {last_err}")
+            if attempt == MAX_ATTEMPTS:
+                if email:
+                    storage.save_bulk_account(run_id, email, password, "failed", last_err)
+                _append_log(run_id, label, "failed", last_err)
+
+    return final_email, final_password, "failed", last_err
 
 
 def run_bulk(run_id: int, target_count: int, verify_email: bool, max_workers: int = 5):

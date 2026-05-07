@@ -366,18 +366,25 @@ Runs parallel **headless** Camoufox browser workers that each create one CoinGec
 
 **Module-level state:**
 - `_STOP_EVENTS` — dict mapping `run_id → threading.Event` for graceful stop
+- `_MAILBOX_SEM` — `threading.Semaphore(2)` capping concurrent mail.tm API calls to avoid rate limiting
 
 **Concurrency:** `ThreadPoolExecutor` with default 5 workers, max 20. Each browser uses ~200–400 MB RAM.
 
-**Per-worker sequence:**
+**Per-worker sequence (up to 3 attempts):**
+
+Each attempt gets a fresh disposable mailbox. If any step before email verification fails, the worker waits with backoff (10–20 s × attempt number) and retries from the beginning with a new mailbox. Email verification failure is a soft failure — the account is saved as `unverified` and no retry is made.
+
 1. Sleep a random stagger delay (`random.uniform(0, max_workers × 3)` seconds) to spread browser launches
-2. Create disposable mailbox via `temp_email.create_mailbox()`
-3. Launch **headless** Camoufox browser, call `coingecko.register(page, email, password)` — auto-handles CAPTCHAs. Retries once on failure with a 5–10 s pause
+2. Acquire `_MAILBOX_SEM`, create disposable mailbox via `temp_email.create_mailbox()` (retries internally on 429/network errors), release semaphore
+3. Launch **headless** Camoufox browser, call `coingecko.register(page, email, password)` — auto-handles CAPTCHAs
 4. Close browser immediately after registration (no browser held open during inbox wait)
-5. If `verify_email=True`: poll inbox → extract link → open new **headless** browser → `coingecko.confirm_email()`. Failure here saves as `unverified` (not `failed`)
+5. If `verify_email=True`: poll inbox → extract link → open new **headless** browser → `coingecko.confirm_email()`. Failure here saves as `unverified` (not `failed`), no retry
 6. Write result to DB; emit SSE event; append to log
+7. If steps 2–4 throw, log `Attempt N/3 failed: <error>` and loop back to step 1 (up to 3 times). After all attempts exhausted, save as `failed` and emit failure event
 
 **Realistic throughput:** ~1 account / 60–120s per worker (browser launch + CAPTCHA wait). With 5 workers running in parallel: ~3–5 accounts/minute.
+
+**Error logging:** All failures write a clean one-line error to the step log and run log. Playwright's verbose internal "Call log" blocks are stripped before logging. Failures that occur before a mailbox is assigned still produce a log entry with `—` as the placeholder email.
 
 #### Step logging
 
