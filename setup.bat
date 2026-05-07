@@ -13,7 +13,10 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 
 echo Installing Playwright browsers...
-python -m playwright install
+python -m playwright install firefox chromium
+
+echo Fetching Camoufox browser binary...
+python -m camoufox fetch
 
 echo.
 echo Done! Virtual environment is active.

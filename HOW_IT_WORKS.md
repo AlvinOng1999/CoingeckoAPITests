@@ -4,6 +4,65 @@ This project automates the creation of CoinGecko demo accounts and API keys usin
 
 ---
 
+## Setup
+
+### Windows (automated)
+
+```bat
+setup.bat
+```
+
+This script creates the virtual environment (if it doesn't exist), installs all Python dependencies, downloads the Playwright browser binaries (Firefox + Chromium), and fetches the Camoufox binary.
+
+### Manual (any OS)
+
+```bash
+# 1. Create and activate the virtual environment
+python -m venv venv
+
+# Windows
+venv\Scripts\activate.bat          # cmd
+.\venv\Scripts\Activate.ps1        # PowerShell
+
+# macOS / Linux
+source venv/bin/activate
+
+# 2. Install dependencies
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+
+# 3. Install Playwright browsers
+python -m playwright install firefox chromium
+
+# 4. Fetch the Camoufox browser binary (includes GeoIP database)
+python -m camoufox fetch
+```
+
+### After activation — verify the setup
+
+```bash
+# Smoke-test core imports
+python -c "import storage, temp_email, coingecko, main; print('imports OK')"
+
+# Run the test suite (12 tests, should all pass)
+pytest tests/ -v
+```
+
+### Daily use
+
+```bash
+# Activate the venv before any command
+venv\Scripts\activate.bat      # cmd
+.\venv\Scripts\Activate.ps1    # PowerShell
+source venv/bin/activate        # macOS / Linux
+
+# Then run whichever entry point you need
+python main.py --count 1
+python dashboard\app.py
+```
+
+---
+
 ## Architecture Overview
 
 ```
