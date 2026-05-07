@@ -2,10 +2,17 @@ import re
 import time
 import random
 import string
+import threading
 import requests
 from requests.exceptions import ConnectionError as _ConnErr, Timeout as _Timeout
 
 BASE = "https://api.mail.tm"
+
+# Cache the domain so concurrent workers don't all hit /domains simultaneously
+_domain_cache: str | None = None
+_domain_cache_ts: float = 0.0
+_domain_cache_ttl: float = 300.0
+_domain_lock = threading.Lock()
 
 
 def _random_string(length=12):
@@ -23,27 +30,51 @@ def _strong_password(length=14):
     return "".join(chars)
 
 
-def _get_domain():
-    r = requests.get(f"{BASE}/domains", timeout=10)
-    r.raise_for_status()
-    domains = r.json().get("hydra:member", [])
-    if not domains:
-        raise RuntimeError("No domains available from mail.tm")
-    return domains[0]["domain"]
+def _get_domain() -> str:
+    global _domain_cache, _domain_cache_ts
+    with _domain_lock:
+        if _domain_cache and (time.time() - _domain_cache_ts) < _domain_cache_ttl:
+            return _domain_cache
+        r = requests.get(f"{BASE}/domains", timeout=10)
+        r.raise_for_status()
+        domains = r.json().get("hydra:member", [])
+        if not domains:
+            raise RuntimeError("No domains available from mail.tm")
+        _domain_cache = domains[0]["domain"]
+        _domain_cache_ts = time.time()
+        return _domain_cache
 
 
-def create_mailbox():
-    """Create a new disposable mailbox. Returns {address, password, token}."""
-    domain = _get_domain()
-    address = f"{_random_string()}@{domain}"
-    password = _random_string(16)
-
-    r = requests.post(f"{BASE}/accounts", json={"address": address, "password": password}, timeout=10)
-    r.raise_for_status()
-
-    token = get_token(address, password)
-    cg_password = _strong_password()
-    return {"address": address, "password": password, "cg_password": cg_password, "token": token}
+def create_mailbox(max_retries: int = 4) -> dict:
+    """Create a new disposable mailbox. Retries with backoff on rate-limit or network errors."""
+    last_exc: Exception | None = None
+    for attempt in range(max_retries):
+        try:
+            domain = _get_domain()
+            address = f"{_random_string()}@{domain}"
+            password = _random_string(16)
+            r = requests.post(
+                f"{BASE}/accounts",
+                json={"address": address, "password": password},
+                timeout=10,
+            )
+            r.raise_for_status()
+            token = get_token(address, password)
+            cg_password = _strong_password()
+            return {"address": address, "password": password, "cg_password": cg_password, "token": token}
+        except requests.exceptions.HTTPError as exc:
+            last_exc = exc
+            code = exc.response.status_code if exc.response is not None else 0
+            if code in (429, 502, 503, 504):
+                # Rate-limited or server overload — back off exponentially
+                backoff = (2 ** attempt) * random.uniform(5, 12)
+                time.sleep(backoff)
+            else:
+                raise
+        except (_ConnErr, _Timeout) as exc:
+            last_exc = exc
+            time.sleep(random.uniform(3, 8) * (attempt + 1))
+    raise last_exc or RuntimeError("Failed to create mailbox after retries")
 
 
 def get_token(address, password):

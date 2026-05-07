@@ -14,6 +14,9 @@ import storage
 
 _STOP_EVENTS: dict[int, threading.Event] = {}
 
+# Limit concurrent mailbox creations so we don't burst mail.tm's API
+_MAILBOX_SEM = threading.Semaphore(2)
+
 
 def start_run(mode: str, target_count: int, verify_email: bool) -> int:
     run_id = storage.create_bulk_run(mode, target_count, False, verify_email)
@@ -88,7 +91,8 @@ def _worker(run_id: int, verify_email: bool, stop_event: threading.Event,
     password = ""
     try:
         _step_log(run_id, "—", "Creating disposable mailbox...")
-        mailbox = temp_email.create_mailbox()
+        with _MAILBOX_SEM:
+            mailbox = temp_email.create_mailbox()
         email = mailbox["address"]
         password = mailbox["cg_password"]
 
