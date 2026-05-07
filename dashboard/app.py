@@ -538,15 +538,12 @@ def bulk_register_page():
 @app.route("/api/bulk-start", methods=["POST"])
 def api_bulk_start():
     body = request.get_json(force=True)
-    mode        = body.get("mode", "http")
-    count       = body.get("count", 100)
-    run_forever = bool(body.get("run_forever", False))
+    count       = int(body.get("count", 10))
     verify      = bool(body.get("verify_email", True))
-    max_workers = int(body.get("max_workers", 50 if mode == "http" else 5))
-    max_workers = min(max_workers, 200 if mode == "http" else 20)
+    max_workers = min(int(body.get("max_workers", 5)), 20)
 
-    run_id = bulk_register.start_run(mode, None if run_forever else count, run_forever, verify)
-    return jsonify({"run_id": run_id, "mode": mode, "max_workers": max_workers})
+    run_id = bulk_register.start_run("browser", count, verify)
+    return jsonify({"run_id": run_id, "max_workers": max_workers})
 
 
 @app.route("/api/bulk-stop", methods=["POST"])
@@ -565,22 +562,15 @@ def api_bulk_stream(run_id):
             yield f"data: {json.dumps({'error': 'run not found'})}\n\n"
         return Response(_err(), mimetype="text/event-stream")
 
-    mode        = run["mode"]
-    run_forever = bool(run["run_forever"])
     verify      = bool(run["verify_email"])
     count       = run["target_count"]
-    max_workers = request.args.get("max_workers", type=int,
-                                   default=50 if mode == "http" else 5)
-    max_workers = min(max_workers, 200 if mode == "http" else 20)
+    max_workers = min(request.args.get("max_workers", type=int, default=5), 20)
 
     stop_event = bulk_register._STOP_EVENTS.get(run_id, threading.Event())
     bulk_register._STOP_EVENTS[run_id] = stop_event
 
     def generate():
-        gen = (bulk_register.run_mode_b if mode == "http" else bulk_register.run_mode_c)(
-            run_id, count, run_forever, verify, max_workers
-        )
-        for event in gen:
+        for event in bulk_register.run_bulk(run_id, count, verify, max_workers):
             yield event
 
     return Response(

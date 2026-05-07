@@ -16,11 +16,7 @@
     .page-wrap { max-width: 1100px; margin: 0 auto; padding: 28px 20px; }
     .section-title { font-size: 1.15rem; font-weight: 700; margin-bottom: 4px; }
     .section-sub { font-size: .82rem; color: #777; margin-bottom: 20px; }
-    .mode-tabs { display: flex; border-bottom: 2px solid #e0e0e0; margin-bottom: 24px; }
-    .mode-tab { padding: 9px 22px; font-size: .88rem; font-weight: 600; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -2px; color: #888; user-select: none; }
-    .mode-tab.active { color: #000; border-bottom-color: #000; }
     .badge-mode { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: .72rem; font-weight: 700; }
-    .badge-http { background: #e8f4fd; color: #0d6efd; }
     .badge-browser { background: #fff3cd; color: #856404; }
     .ctrl-panel { background: #fff; border: 1px solid #e0e0e0; border-radius: 10px; padding: 20px 22px; margin-bottom: 20px; }
     .ctrl-row { display: flex; gap: 16px; align-items: flex-end; flex-wrap: wrap; }
@@ -97,35 +93,17 @@
 
 <div class="page-wrap">
   <div class="section-title">Bulk Account Registration</div>
-  <div class="section-sub">Create hundreds of CoinGecko accounts in parallel to test registration endpoint limits</div>
-
-  <div class="mode-tabs">
-    <div class="mode-tab active" onclick="switchMode('http')">
-      Mode B &mdash; HTTP Blast &nbsp;<span class="badge-mode badge-http">lightweight</span>
-    </div>
-    <div class="mode-tab" onclick="switchMode('browser')">
-      Mode C &mdash; Browser Pool &nbsp;<span class="badge-mode badge-browser">stealth</span>
-    </div>
-  </div>
+  <div class="section-sub">Create CoinGecko accounts in parallel using stealth Camoufox browsers — no CAPTCHA API key required</div>
 
   <div class="ctrl-panel">
     <div class="ctrl-row">
       <div class="ctrl-group">
         <label>Number of Accounts</label>
-        <input type="number" id="inp-count" value="100" min="1" max="5000">
+        <input type="number" id="inp-count" value="10" min="1" max="5000">
       </div>
       <div class="ctrl-group">
-        <label>Concurrency</label>
-        <input type="number" id="inp-workers" value="50" min="1" max="200">
-      </div>
-      <div class="ctrl-group" style="justify-content:flex-end;padding-bottom:2px">
-        <div class="toggle-row">
-          <label class="toggle">
-            <input type="checkbox" id="tog-forever" onchange="onForeverToggle()">
-            <span class="tslider"></span>
-          </label>
-          Run Forever (loop)
-        </div>
+        <label>Concurrency (max 20)</label>
+        <input type="number" id="inp-workers" value="5" min="1" max="20">
       </div>
       <div class="ctrl-group" style="justify-content:flex-end;padding-bottom:2px">
         <div class="toggle-row">
@@ -143,7 +121,7 @@
         </div>
       </div>
     </div>
-    <div class="ctrl-hint" id="mode-hint">Mode B: direct HTTP requests &mdash; up to 200 concurrent workers, no browser required.</div>
+    <div class="ctrl-hint">Real Camoufox browser per worker — stealth fingerprint handles CAPTCHAs automatically. Up to 20 concurrent browsers (~200–400 MB RAM each).</div>
   </div>
 
   <div class="prog-panel" id="prog-panel">
@@ -177,11 +155,6 @@
       <span class="tbl-title">Registered Accounts <span id="acct-count" style="font-weight:400;color:#999;font-size:.82rem;"></span></span>
       <div class="tbl-controls">
         <button class="btn-danger" id="btn-delete" onclick="deleteSelected()" disabled>Delete (<span id="sel-count">0</span>)</button>
-        <select class="tbl-filter" id="fil-mode" onchange="onFilterChange()">
-          <option value="">All modes</option>
-          <option value="http">HTTP Blast</option>
-          <option value="browser">Browser Pool</option>
-        </select>
         <select class="tbl-filter" id="fil-status" onchange="onFilterChange()">
           <option value="">All statuses</option>
           <option value="verified">Verified</option>
@@ -208,7 +181,6 @@
 </div>
 
 <script>
-let currentMode = 'http';
 let currentRunId = null;
 let sseSource = null;
 let pollInterval = null;
@@ -218,37 +190,15 @@ let currentPage = 1;
 let pageSize = 25;
 let selectedIds = new Set();
 
-function switchMode(mode) {
-  currentMode = mode;
-  document.querySelectorAll('.mode-tab').forEach((t, i) => {
-    t.classList.toggle('active', (i === 0 && mode === 'http') || (i === 1 && mode === 'browser'));
-  });
-  const maxWorkers = mode === 'http' ? 200 : 20;
-  const defWorkers = mode === 'http' ? 50 : 5;
-  const inp = document.getElementById('inp-workers');
-  inp.max = maxWorkers;
-  inp.value = defWorkers;
-  document.getElementById('mode-hint').textContent = mode === 'http'
-    ? 'Mode B: direct HTTP requests — up to 200 concurrent workers, no browser required.'
-    : 'Mode C: real Camoufox browser per worker — stealth but heavier. Up to 20 concurrent browsers (~200–400 MB each).';
-}
-
-function onForeverToggle() {
-  const forever = document.getElementById('tog-forever').checked;
-  document.getElementById('inp-count').disabled = forever;
-  document.getElementById('prog-bar-wrap').style.display = forever ? 'none' : 'block';
-}
-
 async function startRun() {
-  const count = parseInt(document.getElementById('inp-count').value) || 100;
-  const workers = parseInt(document.getElementById('inp-workers').value) || 50;
-  const forever = document.getElementById('tog-forever').checked;
+  const count = parseInt(document.getElementById('inp-count').value) || 10;
+  const workers = Math.min(parseInt(document.getElementById('inp-workers').value) || 5, 20);
   const verify = document.getElementById('tog-verify').checked;
 
   const resp = await fetch('/api/bulk-start', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({mode: currentMode, count, run_forever: forever, verify_email: verify, max_workers: workers}),
+    body: JSON.stringify({count, verify_email: verify, max_workers: workers}),
   });
   const data = await resp.json();
   currentRunId = data.run_id;
@@ -257,7 +207,7 @@ async function startRun() {
   document.getElementById('btn-stop').disabled = false;
   document.getElementById('prog-panel').style.display = 'block';
   document.getElementById('prog-label').textContent = 'Run #' + currentRunId + ' in progress';
-  document.getElementById('log-feed').innerHTML = '';
+  document.getElementById('log-feed').innerHTML = '<div class="log-info">Launching run #' + currentRunId + '...</div>';
   document.getElementById('step-log').innerHTML = '';
 
   sseSource = new EventSource('/api/bulk-stream/' + currentRunId + '?max_workers=' + workers);
@@ -272,16 +222,23 @@ async function startRun() {
 }
 
 function updateProgress(d) {
+  if (d.message) {
+    const feed = document.getElementById('log-feed');
+    const line = document.createElement('div');
+    line.className = 'log-info';
+    line.textContent = '⏳ ' + d.message;
+    feed.appendChild(line);
+    feed.scrollTop = feed.scrollHeight;
+    return;
+  }
   const done = d.done || 0;
   const total = d.total;
   const errors = d.errors || 0;
-  const forever = document.getElementById('tog-forever').checked;
-  if (!forever && total) {
+  if (total) {
     document.getElementById('prog-bar').style.width = Math.min(100, (done / total) * 100) + '%';
   }
-  let stats = '<span style="color:#16a34a;font-weight:600">' + done + ' created</span>' +
-              ' &middot; <span style="color:#dc2626;font-weight:600">' + errors + ' failed</span>';
-  if (d.rate_limited) stats += ' &middot; ' + d.rate_limited + ' rate-limited';
+  const stats = '<span style="color:#16a34a;font-weight:600">' + done + ' created</span>' +
+               ' &middot; <span style="color:#dc2626;font-weight:600">' + errors + ' failed</span>';
   document.getElementById('prog-stats').innerHTML = stats;
   if (d.email && d.status) {
     const feed = document.getElementById('log-feed');
@@ -329,10 +286,8 @@ function statusBadge(s) {
   return '<span class="s-failed">✗ Failed</span>';
 }
 
-function modeBadge(m) {
-  return m === 'http'
-    ? '<span class="badge-mode badge-http">HTTP</span>'
-    : '<span class="badge-mode badge-browser">Browser</span>';
+function modeBadge() {
+  return '<span class="badge-mode badge-browser">Browser</span>';
 }
 
 function relTime(ts) {
@@ -474,10 +429,8 @@ function renderTable() {
 }
 
 async function loadAccounts() {
-  const mode = document.getElementById('fil-mode').value;
   const status = document.getElementById('fil-status').value;
   let url = '/api/bulk-accounts?';
-  if (mode) url += 'mode=' + mode + '&';
   if (status) url += 'status=' + status + '&';
   const resp = await fetch(url);
   allAccounts = await resp.json();
