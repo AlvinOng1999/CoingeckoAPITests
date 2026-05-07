@@ -116,9 +116,9 @@ def _worker(run_id: int, verify_email: bool, stop_event: threading.Event,
         password = ""
         try:
             if attempt > 1:
-                backoff = random.uniform(10, 20) * (attempt - 1)
+                backoff = random.uniform(2, 5)
                 _step_log(run_id, "—",
-                          f"Retrying (attempt {attempt}/{MAX_ATTEMPTS}) after {backoff:.0f}s backoff...")
+                          f"Retrying (attempt {attempt}/{MAX_ATTEMPTS}) after {backoff:.0f}s...")
                 time.sleep(backoff)
 
             # ── Step 1: Fresh mailbox for every attempt ──────────────────────────

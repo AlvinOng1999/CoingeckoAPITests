@@ -372,7 +372,7 @@ Runs parallel **headless** Camoufox browser workers that each create one CoinGec
 
 **Per-worker sequence (up to 3 attempts):**
 
-Each attempt gets a fresh disposable mailbox. If any step before email verification fails, the worker waits with backoff (10–20 s × attempt number) and retries from the beginning with a new mailbox. Email verification failure is a soft failure — the account is saved as `unverified` and no retry is made.
+Each attempt gets a fresh disposable mailbox. If any step before email verification fails, the worker waits 2–5 s (just enough for the browser to close) and retries from the beginning with a new mailbox. `create_mailbox()` handles mail.tm rate-limit backoff internally, so no large delay is needed at the worker level. Email verification failure is a soft failure — the account is saved as `unverified` and no retry is made.
 
 1. Sleep a random stagger delay (`random.uniform(0, max_workers × 3)` seconds) to spread browser launches
 2. Acquire `_MAILBOX_SEM`, create disposable mailbox via `temp_email.create_mailbox()` (retries internally on 429/network errors), release semaphore
