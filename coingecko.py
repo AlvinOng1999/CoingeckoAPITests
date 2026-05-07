@@ -386,7 +386,16 @@ def register(page: Page, email: str, password: str):
             time.sleep(0.5)
 
         if signup_btn:
-            signup_btn.click()
+            try:
+                signup_btn.click(timeout=15_000)
+            except PWTimeout:
+                # Click registered but server returned inline error (no navigation) —
+                # force-click to re-submit in case captchaVerified toggled since the wait
+                print("  [register] click timed out waiting for navigation — force-clicking")
+                for btn in page.locator("[data-auth-target='signUpSubmit']").all():
+                    if btn.is_visible():
+                        btn.click(force=True)
+                        break
         else:
             # Force-click as last resort (button stays disabled when captchaVerified=false)
             for btn in page.locator("[data-auth-target='signUpSubmit']").all():
@@ -394,7 +403,10 @@ def register(page: Page, email: str, password: str):
                     btn.click(force=True)
                     break
 
-        page.wait_for_load_state("load", timeout=NAV_TIMEOUT)
+        try:
+            page.wait_for_load_state("load", timeout=NAV_TIMEOUT)
+        except PWTimeout:
+            pass  # no full navigation is fine — form may have submitted via AJAX
         time.sleep(2)
 
 

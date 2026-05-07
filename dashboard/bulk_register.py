@@ -53,6 +53,21 @@ def _step_log(run_id: int, email: str, msg: str):
         f.write(f"[{ts}] {email} > {msg}\n")
 
 
+def _clean_error(exc: Exception) -> str:
+    """Return a single-line summary, stripping Playwright's verbose Call log block."""
+    msg = str(exc)
+    for marker in (
+        "=========================== logs ===",
+        "\n  Call log:\n",
+        "\nCall log:\n",
+    ):
+        idx = msg.find(marker)
+        if idx != -1:
+            msg = msg[:idx]
+    lines = [ln.strip() for ln in msg.splitlines() if ln.strip()]
+    return lines[0] if lines else msg
+
+
 def _sse(data: dict) -> str:
     return f"data: {json.dumps(data)}\n\n"
 
@@ -140,10 +155,12 @@ def _worker(run_id: int, verify_email: bool, stop_event: threading.Event,
         return email, password, status, ""
 
     except Exception as exc:
-        err = str(exc)
+        err = _clean_error(exc)
+        label = email or "—"
+        _step_log(run_id, label, f"FAILED: {err}")
         if email:
             storage.save_bulk_account(run_id, email, password, "failed", err)
-            _append_log(run_id, email, "failed", err)
+        _append_log(run_id, label, "failed", err)
         return email, password, "failed", err
 
 
