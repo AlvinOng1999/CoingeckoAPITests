@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bulk Register — CoinGecko QA</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body { background: #f8f9fa; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; font-size: 14px; color: #0a0a0a; }
+    .navbar { background: #000 !important; padding: 14px 28px; border-bottom: 1px solid #000; }
+    .navbar-brand { color: #fff !important; font-size: 1rem; letter-spacing: .01em; }
+    .navbar .nav-pill { color: #777; font-size: .85rem; text-decoration: none; padding: 5px 12px; border-radius: 6px; transition: color .15s, background .15s; }
+    .navbar .nav-pill:hover { color: #fff; background: #222; }
+    .navbar .nav-pill.active { color: #fff; }
+    .page-wrap { max-width: 1100px; margin: 0 auto; padding: 28px 20px; }
+    .section-title { font-size: 1.15rem; font-weight: 700; margin-bottom: 4px; }
+    .section-sub { font-size: .82rem; color: #777; margin-bottom: 20px; }
+    .badge-mode { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: .72rem; font-weight: 700; }
+    .badge-browser { background: #fff3cd; color: #856404; }
+    .ctrl-panel { background: #fff; border: 1px solid #e0e0e0; border-radius: 10px; padding: 20px 22px; margin-bottom: 20px; }
+    .ctrl-row { display: flex; gap: 16px; align-items: flex-end; flex-wrap: wrap; }
+    .ctrl-group { display: flex; flex-direction: column; gap: 5px; }
+    .ctrl-group label { font-size: .75rem; font-weight: 600; color: #555; text-transform: uppercase; letter-spacing: .05em; }
+    .ctrl-group input[type=number] { width: 110px; padding: 7px 10px; border: 1px solid #ccc; border-radius: 6px; font-size: .9rem; }
+    .ctrl-group input[type=number]:disabled { background: #f5f5f5; color: #aaa; }
+    .toggle-row { display: flex; align-items: center; gap: 10px; font-size: .88rem; color: #333; }
+    .toggle { position: relative; width: 40px; height: 22px; flex-shrink: 0; }
+    .toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
+    .tslider { position: absolute; inset: 0; background: #ccc; border-radius: 22px; cursor: pointer; transition: .2s; }
+    .tslider:before { content: ""; position: absolute; height: 16px; width: 16px; left: 3px; bottom: 3px; background: #fff; border-radius: 50%; transition: .2s; }
+    .toggle input:checked + .tslider { background: #000; }
+    .toggle input:checked + .tslider:before { transform: translateX(18px); }
+    .ctrl-hint { margin-top: 10px; font-size: .78rem; color: #999; }
+    .btn-start { background: #000; color: #fff; border: none; padding: 8px 24px; border-radius: 6px; font-size: .88rem; font-weight: 600; cursor: pointer; }
+    .btn-start:hover { background: #222; }
+    .btn-stop { background: #dc3545; color: #fff; border: none; padding: 8px 24px; border-radius: 6px; font-size: .88rem; font-weight: 600; cursor: pointer; }
+    .btn-stop:disabled { opacity: .4; cursor: not-allowed; }
+    .prog-panel { background: #fff; border: 1px solid #e0e0e0; border-radius: 10px; padding: 18px 20px; margin-bottom: 20px; display: none; }
+    .prog-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+    .prog-label { font-size: .82rem; font-weight: 600; color: #444; }
+    .prog-stats { font-size: .82rem; color: #888; }
+    .prog-bar-wrap { background: #f0f0f0; border-radius: 6px; height: 8px; margin-bottom: 14px; }
+    .prog-bar-fill { background: #000; height: 8px; border-radius: 6px; width: 0%; transition: width .3s; }
+    .log-panels { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .log-panel-hdr { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+    .log-panel-label { font-size: .72rem; font-weight: 600; color: #666; text-transform: uppercase; letter-spacing: .05em; }
+    .btn-clear { background: transparent; border: 1px solid #555; color: #999; padding: 1px 7px; border-radius: 4px; font-size: .68rem; cursor: pointer; }
+    .btn-clear:hover { border-color: #999; color: #ccc; }
+    .log-feed { background: #1a1a1a; border-radius: 8px; padding: 12px 14px; font-family: monospace; font-size: .78rem; color: #aaa; height: 150px; overflow-y: auto; }
+    .log-ok { color: #4ade80; }
+    .log-err { color: #f87171; }
+    .log-info { color: #60a5fa; }
+    .tbl-panel { background: #fff; border: 1px solid #e0e0e0; border-radius: 10px; overflow: hidden; }
+    .tbl-header { padding: 14px 20px; border-bottom: 1px solid #e8e8e8; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
+    .tbl-title { font-size: .9rem; font-weight: 700; }
+    .tbl-controls { display: flex; gap: 8px; align-items: center; }
+    select.tbl-filter { font-size: .78rem; padding: 4px 8px; border: 1px solid #ccc; border-radius: 5px; }
+    .btn-export { background: #fff; border: 1px solid #ccc; padding: 5px 14px; border-radius: 6px; font-size: .78rem; font-weight: 600; cursor: pointer; color: #333; }
+    .btn-export:hover { border-color: #000; color: #000; }
+    table.accts { width: 100%; border-collapse: collapse; font-size: .82rem; }
+    table.accts th { padding: 9px 14px; text-align: left; font-size: .72rem; text-transform: uppercase; letter-spacing: .06em; color: #888; border-bottom: 1px solid #e8e8e8; }
+    table.accts td { padding: 9px 14px; border-bottom: 1px solid #f0f0f0; vertical-align: middle; }
+    table.accts tr:last-child td { border-bottom: none; }
+    table.accts td.mono { font-family: monospace; }
+    .s-verified { color: #16a34a; font-weight: 600; }
+    .s-unverified { color: #dc2626; }
+    .s-pending { color: #d97706; }
+    .s-failed { color: #6b7280; }
+    .tbl-empty { padding: 32px; text-align: center; color: #aaa; font-size: .85rem; }
+    .btn-danger { background: #dc3545; color: #fff; border: none; padding: 5px 14px; border-radius: 6px; font-size: .78rem; font-weight: 600; cursor: pointer; }
+    .btn-danger:disabled { opacity: .4; cursor: not-allowed; }
+    .btn-danger:hover:not(:disabled) { background: #bb2d3b; }
+    .pager-row { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 12px 20px; border-top: 1px solid #f0f0f0; }
+    .pager-btn { background: #fff; border: 1px solid #ccc; padding: 4px 12px; border-radius: 5px; font-size: .8rem; cursor: pointer; }
+    .pager-btn:disabled { opacity: .4; cursor: not-allowed; }
+    .pager-btn:hover:not(:disabled) { border-color: #000; }
+    .pager-info { font-size: .82rem; color: #666; min-width: 120px; text-align: center; }
+    table.accts th:first-child, table.accts td:first-child { width: 36px; }
+  </style>
+</head>
+<body>
+
+<nav class="navbar navbar-dark px-0" style="padding-left:28px!important;padding-right:28px!important">
+  <span class="navbar-brand fw-bold">CoinGecko QA</span>
+  <div class="ms-4 d-flex gap-1 align-items-center">
+    <a href="/" class="nav-pill">Dashboard</a>
+    <a href="/bulk-register" class="nav-pill active">Bulk Register</a>
+    <a href="/search" class="nav-pill">Search</a>
+    <a href="/backtest" class="nav-pill">Backtest</a>
+  </div>
+</nav>
+
+<div class="page-wrap">
+  <div class="section-title">Bulk Account Registration</div>
+  <div class="section-sub">Create CoinGecko accounts in parallel using stealth Camoufox browsers — no CAPTCHA API key required</div>
+
+  <div class="ctrl-panel">
+    <div class="ctrl-row">
+      <div class="ctrl-group">
+        <label>Number of Accounts</label>
+        <input type="number" id="inp-count" value="10" min="1" max="5000">
+      </div>
+      <div class="ctrl-group">
+        <label>Concurrency (max 20)</label>
+        <input type="number" id="inp-workers" value="5" min="1" max="20">
+      </div>
+      <div class="ctrl-group" style="justify-content:flex-end;padding-bottom:2px">
+        <div class="toggle-row">
+          <label class="toggle">
+            <input type="checkbox" id="tog-verify" checked>
+            <span class="tslider"></span>
+          </label>
+          Include Email Verification
+        </div>
+      </div>
+      <div class="ctrl-group" style="justify-content:flex-end;padding-bottom:2px">
+        <div style="display:flex;gap:8px">
+          <button class="btn-start" id="btn-start" onclick="startRun()">&#9654; Start</button>
+          <button class="btn-stop" id="btn-stop" disabled onclick="stopRun()">&#9632; Stop</button>
+        </div>
+      </div>
+    </div>
+    <div class="ctrl-hint">Real Camoufox browser per worker — stealth fingerprint handles CAPTCHAs automatically. Up to 20 concurrent browsers (~200–400 MB RAM each).</div>
+  </div>
+
+  <div class="prog-panel" id="prog-panel">
+    <div class="prog-header">
+      <span class="prog-label" id="prog-label">Run in progress</span>
+      <span class="prog-stats" id="prog-stats"><span style="color:#16a34a;font-weight:600">0 created</span> &middot; <span style="color:#dc2626;font-weight:600">0 failed</span></span>
+    </div>
+    <div class="prog-bar-wrap" id="prog-bar-wrap">
+      <div class="prog-bar-fill" id="prog-bar"></div>
+    </div>
+    <div class="log-panels">
+      <div>
+        <div class="log-panel-hdr">
+          <span class="log-panel-label">Live Events</span>
+          <button class="btn-clear" onclick="clearLog('log-feed')">Clear</button>
+        </div>
+        <div class="log-feed" id="log-feed"></div>
+      </div>
+      <div>
+        <div class="log-panel-hdr">
+          <span class="log-panel-label">Step Log</span>
+          <button class="btn-clear" onclick="clearLog('step-log')">Clear</button>
+        </div>
+        <div class="log-feed" id="step-log"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="tbl-panel">
+    <div class="tbl-header">
+      <span class="tbl-title">Registered Accounts <span id="acct-count" style="font-weight:400;color:#999;font-size:.82rem;"></span></span>
+      <div class="tbl-controls">
+        <button class="btn-danger" id="btn-delete" onclick="deleteSelected()" disabled>Delete (<span id="sel-count">0</span>)</button>
+        <select class="tbl-filter" id="fil-status" onchange="onFilterChange()">
+          <option value="">All statuses</option>
+          <option value="verified">Verified</option>
+          <option value="unverified">Unverified</option>
+          <option value="failed">Failed</option>
+        </select>
+        <select class="tbl-filter" id="fil-page-size" onchange="onPageSizeChange()">
+          <option value="25">25 / page</option>
+          <option value="50">50 / page</option>
+          <option value="100">100 / page</option>
+        </select>
+        <button class="btn-export" onclick="exportXlsx()">&#11015; Export Excel</button>
+      </div>
+    </div>
+    <div id="tbl-body">
+      <div class="tbl-empty">No accounts yet &mdash; start a run above.</div>
+    </div>
+    <div id="pager-row" class="pager-row" style="display:none">
+      <button class="pager-btn" id="btn-prev" onclick="prevPage()">&#8592; Prev</button>
+      <span id="pager-info" class="pager-info"></span>
+      <button class="pager-btn" id="btn-next" onclick="nextPage()">Next &#8594;</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let currentRunId = null;
+let sseSource = null;
+let pollInterval = null;
+let stepLogInterval = null;
+let allAccounts = [];
+let currentPage = 1;
+let pageSize = 25;
+let selectedIds = new Set();
+
+async function startRun() {
+  const count = parseInt(document.getElementById('inp-count').value) || 10;
+  const workers = Math.min(parseInt(document.getElementById('inp-workers').value) || 5, 20);
+  const verify = document.getElementById('tog-verify').checked;
+
+  const resp = await fetch('/api/bulk-start', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({count, verify_email: verify, max_workers: workers}),
+  });
+  const data = await resp.json();
+  currentRunId = data.run_id;
+
+  document.getElementById('btn-start').disabled = true;
+  document.getElementById('btn-stop').disabled = false;
+  document.getElementById('prog-panel').style.display = 'block';
+  document.getElementById('prog-label').textContent = 'Run #' + currentRunId + ' in progress';
+  document.getElementById('log-feed').innerHTML = '<div class="log-info">Launching run #' + currentRunId + '...</div>';
+  document.getElementById('step-log').innerHTML = '';
+
+  sseSource = new EventSource('/api/bulk-stream/' + currentRunId + '?max_workers=' + workers);
+  sseSource.onmessage = function(e) {
+    const d = JSON.parse(e.data);
+    updateProgress(d);
+    if (d.complete) { sseSource.close(); onRunComplete(); }
+  };
+
+  pollInterval = setInterval(loadAccounts, 3000);
+  stepLogInterval = setInterval(loadStepLog, 2000);
+}
+
+function updateProgress(d) {
+  if (d.message) {
+    const feed = document.getElementById('log-feed');
+    const line = document.createElement('div');
+    line.className = 'log-info';
+    line.textContent = '⏳ ' + d.message;
+    feed.appendChild(line);
+    feed.scrollTop = feed.scrollHeight;
+    return;
+  }
+  const done = d.done || 0;
+  const total = d.total;
+  const errors = d.errors || 0;
+  if (total) {
+    document.getElementById('prog-bar').style.width = Math.min(100, (done / total) * 100) + '%';
+  }
+  const stats = '<span style="color:#16a34a;font-weight:600">' + done + ' created</span>' +
+               ' &middot; <span style="color:#dc2626;font-weight:600">' + errors + ' failed</span>';
+  document.getElementById('prog-stats').innerHTML = stats;
+  if (d.email && d.status) {
+    const feed = document.getElementById('log-feed');
+    const line = document.createElement('div');
+    const cls = (d.status === 'verified' || d.status === 'unverified') ? 'log-ok' : d.status === 'failed' ? 'log-err' : 'log-info';
+    const label = d.status === 'verified' ? 'registered & verified' : d.status === 'unverified' ? 'registered (no verification)' : 'failed';
+    line.className = cls;
+    line.textContent = '[' + (d.status === 'failed' ? '✗' : '✓') + '] ' + d.email + ' — ' + label;
+    feed.appendChild(line);
+    feed.scrollTop = feed.scrollHeight;
+  }
+}
+
+function onRunComplete() {
+  document.getElementById('btn-start').disabled = false;
+  document.getElementById('btn-stop').disabled = true;
+  document.getElementById('prog-label').textContent = 'Run #' + currentRunId + ' — complete';
+  clearInterval(pollInterval);
+  clearInterval(stepLogInterval);
+  loadAccounts();
+  loadStepLog();
+}
+
+async function stopRun() {
+  if (!currentRunId) return;
+  await fetch('/api/bulk-stop', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({run_id: currentRunId}),
+  });
+  if (sseSource) sseSource.close();
+  clearInterval(pollInterval);
+  clearInterval(stepLogInterval);
+  document.getElementById('btn-start').disabled = false;
+  document.getElementById('btn-stop').disabled = true;
+  document.getElementById('prog-label').textContent = 'Run #' + currentRunId + ' — stopped';
+  loadAccounts();
+  loadStepLog();
+}
+
+function statusBadge(s) {
+  if (s === 'verified')   return '<span class="s-verified">✓ Verified</span>';
+  if (s === 'unverified') return '<span class="s-unverified">✗ Unverified</span>';
+  if (s === 'pending')    return '<span class="s-pending">⧖ Pending</span>';
+  return '<span class="s-failed">✗ Failed</span>';
+}
+
+function modeBadge() {
+  return '<span class="badge-mode badge-browser">Browser</span>';
+}
+
+function relTime(ts) {
+  if (!ts) return '';
+  const diff = Math.floor((Date.now() - new Date(ts + 'Z').getTime()) / 1000);
+  if (diff < 60) return 'just now';
+  if (diff < 3600) return Math.floor(diff/60) + 'm ago';
+  return Math.floor(diff/3600) + 'h ago';
+}
+
+async function loadStepLog() {
+  if (!currentRunId) return;
+  const resp = await fetch('/api/bulk-log/' + currentRunId);
+  const data = await resp.json();
+  const feed = document.getElementById('step-log');
+  if (!data.lines || !data.lines.length) return;
+  feed.innerHTML = data.lines.map(function(l) {
+    const isStep = l.includes(' > ');
+    const cls = isStep ? 'log-info' : l.includes('failed') ? 'log-err' : 'log-ok';
+    return '<div class="' + cls + '">' + l.replace(/</g, '&lt;') + '</div>';
+  }).join('');
+  feed.scrollTop = feed.scrollHeight;
+}
+
+function clearLog(id) {
+  document.getElementById(id).innerHTML = '';
+}
+
+function onFilterChange() {
+  currentPage = 1;
+  loadAccounts();
+}
+
+function onPageSizeChange() {
+  pageSize = parseInt(document.getElementById('fil-page-size').value);
+  currentPage = 1;
+  renderTable();
+}
+
+function prevPage() {
+  if (currentPage > 1) { currentPage--; renderTable(); }
+}
+
+function nextPage() {
+  const totalPages = Math.max(1, Math.ceil(allAccounts.length / pageSize));
+  if (currentPage < totalPages) { currentPage++; renderTable(); }
+}
+
+function toggleSelectAll() {
+  const chkAll = document.getElementById('chk-all');
+  if (!chkAll) return;
+  const start = (currentPage - 1) * pageSize;
+  allAccounts.slice(start, start + pageSize).forEach(function(a) {
+    if (chkAll.checked) selectedIds.add(a.id); else selectedIds.delete(a.id);
+  });
+  updateDeleteBtn();
+  renderTable();
+}
+
+function onRowCheck(cb) {
+  const id = parseInt(cb.dataset.id);
+  if (cb.checked) selectedIds.add(id); else selectedIds.delete(id);
+  updateDeleteBtn();
+  const start = (currentPage - 1) * pageSize;
+  const pageIds = allAccounts.slice(start, start + pageSize).map(a => a.id);
+  const allSel = pageIds.length > 0 && pageIds.every(id => selectedIds.has(id));
+  const someSel = pageIds.some(id => selectedIds.has(id));
+  const chkAll = document.getElementById('chk-all');
+  if (chkAll) { chkAll.checked = allSel; chkAll.indeterminate = !allSel && someSel; }
+}
+
+function updateDeleteBtn() {
+  const n = selectedIds.size;
+  document.getElementById('btn-delete').disabled = n === 0;
+  document.getElementById('sel-count').textContent = n;
+}
+
+async function deleteSelected() {
+  if (!selectedIds.size) return;
+  if (!confirm('Delete ' + selectedIds.size + ' account(s)? This cannot be undone.')) return;
+  await fetch('/api/bulk-delete', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ids: [...selectedIds]}),
+  });
+  selectedIds.clear();
+  updateDeleteBtn();
+  await loadAccounts();
+}
+
+function renderTable() {
+  const total = allAccounts.length;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  if (currentPage > totalPages) currentPage = totalPages;
+  const start = (currentPage - 1) * pageSize;
+  const pageAccts = allAccounts.slice(start, start + pageSize);
+
+  document.getElementById('acct-count').textContent = '(' + total + ' total)';
+
+  const pagerRow = document.getElementById('pager-row');
+  if (total > pageSize) {
+    pagerRow.style.display = 'flex';
+    document.getElementById('pager-info').textContent = 'Page ' + currentPage + ' of ' + totalPages;
+    document.getElementById('btn-prev').disabled = currentPage <= 1;
+    document.getElementById('btn-next').disabled = currentPage >= totalPages;
+  } else {
+    pagerRow.style.display = 'none';
+  }
+
+  if (!pageAccts.length) {
+    document.getElementById('tbl-body').innerHTML = '<div class="tbl-empty">No accounts match the current filters.</div>';
+    return;
+  }
+
+  const pageIds = pageAccts.map(a => a.id);
+  const allPageSel = pageIds.length > 0 && pageIds.every(id => selectedIds.has(id));
+  const somePageSel = pageIds.some(id => selectedIds.has(id));
+
+  const rows = pageAccts.map(function(a, i) {
+    const chk = selectedIds.has(a.id) ? 'checked' : '';
+    return '<tr>' +
+      '<td><input type="checkbox" class="row-chk" data-id="' + a.id + '" ' + chk + ' onchange="onRowCheck(this)"></td>' +
+      '<td style="color:#aaa">' + (total - start - i) + '</td>' +
+      '<td class="mono">' + a.email + '</td>' +
+      '<td class="mono">' + a.password + '</td>' +
+      '<td>' + statusBadge(a.status) + '</td>' +
+      '<td>' + modeBadge(a.mode) + '</td>' +
+      '<td style="color:#aaa">' + relTime(a.created_at) + '</td></tr>';
+  }).join('');
+
+  document.getElementById('tbl-body').innerHTML =
+    '<table class="accts"><thead><tr>' +
+    '<th><input type="checkbox" id="chk-all" ' + (allPageSel ? 'checked' : '') + ' onchange="toggleSelectAll()"></th>' +
+    '<th>#</th><th>Email</th><th>Password</th><th>Verification</th><th>Mode</th><th>Created</th>' +
+    '</tr></thead><tbody>' + rows + '</tbody></table>';
+
+  const chkAll = document.getElementById('chk-all');
+  if (chkAll) chkAll.indeterminate = !allPageSel && somePageSel;
+}
+
+async function loadAccounts() {
+  const status = document.getElementById('fil-status').value;
+  let url = '/api/bulk-accounts?';
+  if (status) url += 'status=' + status + '&';
+  const resp = await fetch(url);
+  allAccounts = await resp.json();
+  renderTable();
+}
+
+function exportXlsx() {
+  const url = currentRunId ? '/api/bulk-export?run_id=' + currentRunId : '/api/bulk-export';
+  window.location.href = url;
+}
+
+loadAccounts();
+</script>
+
+</body>
+</html>

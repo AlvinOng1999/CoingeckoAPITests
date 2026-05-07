@@ -3,21 +3,47 @@ import sys
 import os
 import json
 import time
+import threading
+import re
 import requests
 from flask import Flask, render_template, redirect, url_for, jsonify, request, Response
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import storage
+import bulk_register
 
 app = Flask(__name__)
 CG_BASE = "https://api.coingecko.com/api/v3"
 
 def _local_usage(api_key: str):
-    """CoinGecko /key is PRO-only. Returns locally-tracked (used, left) from DB."""
     for a in storage.get_all_accounts():
         if a["api_key"] == api_key:
             return a["calls_used"], a["calls_left"]
     return 0, 10000
+
+
+def _try_sync_key(api_key: str) -> dict | None:
+    """
+    Calls CoinGecko GET /key to fetch real monthly usage and writes it to the DB.
+    Returns {"calls_used": N, "calls_left": N} on success, None if unavailable.
+    """
+    try:
+        r = requests.get(
+            f"{CG_BASE}/key",
+            headers={"x-cg-demo-api-key": api_key},
+            timeout=8,
+        )
+        if r.ok:
+            d = r.json()
+            used   = int(d.get("current_total_monthly_calls", 0))
+            credit = int(d.get("monthly_call_credit", 10000))
+            left   = int(d.get("current_remaining_monthly_calls", max(0, credit - used)))
+            storage.update_usage(api_key, used, left)
+            return {"calls_used": used, "calls_left": left}
+        return None
+    except Exception:
+        return None
 
 
 @app.route("/")
@@ -31,12 +57,36 @@ def index():
 
 @app.route("/refresh/<api_key>", methods=["POST"])
 def refresh(api_key):
+    _try_sync_key(api_key)
     return redirect(url_for("index"))
 
 
 @app.route("/refresh-all", methods=["POST"])
 def refresh_all():
+    for acc in storage.get_all_accounts():
+        _try_sync_key(acc["api_key"])
     return redirect(url_for("index"))
+
+
+@app.route("/api/sync-all", methods=["POST"])
+def api_sync_all():
+    accounts = storage.get_all_accounts()
+    synced = 0
+    keys = []
+    for acc in accounts:
+        result = _try_sync_key(acc["api_key"])
+        if result:
+            synced += 1
+            keys.append({"id": acc["id"], "synced": True, **result})
+        else:
+            keys.append({"id": acc["id"], "synced": False,
+                         "calls_used": acc["calls_used"], "calls_left": acc["calls_left"]})
+    return jsonify({
+        "synced": synced,
+        "total": len(accounts),
+        "pro_required": synced == 0 and len(accounts) > 0,
+        "keys": keys,
+    })
 
 
 @app.route("/create", methods=["POST"])
@@ -170,12 +220,15 @@ def api_markets():
 
 @app.route("/api/debug-key")
 def api_debug_key():
-    """Shows local DB usage (CoinGecko /key is PRO-only for Demo keys)."""
     account = storage.get_active_account()
     if not account:
         return jsonify({"error": "No active account"}), 503
+    synced = _try_sync_key(account["api_key"])
+    if synced:
+        return jsonify({"source": "coingecko", **synced, "api_key": account["api_key"][:12] + "••••"})
     return jsonify({
-        "note": "CoinGecko /key is PRO-only — usage is tracked locally",
+        "source": "local",
+        "note": "GET /key unavailable — returning locally-tracked counts",
         "api_key": account["api_key"][:12] + "••••",
         "calls_used": account["calls_used"],
         "calls_left": account["calls_left"],
@@ -473,6 +526,158 @@ def api_stress_test():
         mimetype="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+# ── Bulk Register ─────────────────────────────────────────────────────────────
+
+@app.route("/bulk-register")
+def bulk_register_page():
+    return render_template("bulk_register.html")
+
+
+@app.route("/api/bulk-start", methods=["POST"])
+def api_bulk_start():
+    body = request.get_json(force=True)
+    count       = int(body.get("count", 10))
+    verify      = bool(body.get("verify_email", True))
+    max_workers = min(int(body.get("max_workers", 5)), 20)
+
+    run_id = bulk_register.start_run("browser", count, verify)
+    return jsonify({"run_id": run_id, "max_workers": max_workers})
+
+
+@app.route("/api/bulk-stop", methods=["POST"])
+def api_bulk_stop():
+    body = request.get_json(force=True)
+    run_id = int(body.get("run_id", 0))
+    bulk_register.stop_run(run_id)
+    return jsonify({"ok": True, "run_id": run_id})
+
+
+@app.route("/api/bulk-stream/<int:run_id>")
+def api_bulk_stream(run_id):
+    run = storage.get_bulk_run(run_id)
+    if not run:
+        def _err():
+            yield f"data: {json.dumps({'error': 'run not found'})}\n\n"
+        return Response(_err(), mimetype="text/event-stream")
+
+    verify      = bool(run["verify_email"])
+    count       = run["target_count"]
+    max_workers = min(request.args.get("max_workers", type=int, default=5), 20)
+
+    stop_event = bulk_register._STOP_EVENTS.get(run_id, threading.Event())
+    bulk_register._STOP_EVENTS[run_id] = stop_event
+
+    def generate():
+        for event in bulk_register.run_bulk(run_id, count, verify, max_workers):
+            yield event
+
+    return Response(
+        generate(),
+        mimetype="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.route("/api/bulk-accounts")
+def api_bulk_accounts():
+    run_id = request.args.get("run_id", type=int)
+    status = request.args.get("status")
+    mode   = request.args.get("mode")
+    return jsonify(storage.get_bulk_accounts(run_id=run_id, status=status, mode=mode))
+
+
+@app.route("/api/bulk-export")
+def api_bulk_export():
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from flask import send_file
+    import io
+    import glob as _glob
+
+    run_id = request.args.get("run_id", type=int)
+    accounts = storage.get_bulk_accounts(run_id=run_id)
+
+    wb = openpyxl.Workbook()
+
+    # ── Sheet 1: Accounts ──────────────────────────────────────────────────────
+    ws1 = wb.active
+    ws1.title = "Accounts"
+    headers = ["#", "Email", "Password", "Status", "Verified", "Mode", "Run ID", "Created At"]
+    ws1.append(headers)
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill("solid", fgColor="000000")
+    for col, _ in enumerate(headers, 1):
+        cell = ws1.cell(row=1, column=col)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center")
+
+    for i, acc in enumerate(accounts, 1):
+        ws1.append([
+            i,
+            acc["email"],
+            acc["password"],
+            acc["status"],
+            "Yes" if acc["verified"] else "No",
+            acc.get("mode", ""),
+            acc["run_id"],
+            acc["created_at"],
+        ])
+
+    for col in ws1.columns:
+        max_len = max(len(str(cell.value or "")) for cell in col)
+        ws1.column_dimensions[col[0].column_letter].width = min(max_len + 4, 50)
+
+    # ── Sheet 2: Run Log ────────────────────────────────────────────────────────
+    ws2 = wb.create_sheet("Run Log")
+    ws2.append(["Timestamp", "Email", "Status", "Error"])
+    for col in range(1, 5):
+        cell = ws2.cell(row=1, column=col)
+        cell.font = header_font
+        cell.fill = header_fill
+
+    log_dir = os.path.join(os.path.dirname(__file__), "..", "logs")
+    if run_id:
+        log_files = [os.path.join(log_dir, f"bulk_run_{run_id}.txt")]
+    else:
+        log_files = sorted(_glob.glob(os.path.join(log_dir, "bulk_run_*.txt")))
+
+    log_re = re.compile(r"\[(.+?)\] (.+?) — (.+?)(?:: (.+))?$")
+    for lf in log_files:
+        if not os.path.exists(lf):
+            continue
+        with open(lf, encoding="utf-8") as f:
+            for line in f:
+                m = log_re.match(line.strip())
+                if m:
+                    ws2.append([m.group(1), m.group(2), m.group(3), m.group(4) or ""])
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    fname = f"bulk_accounts_run{run_id}.xlsx" if run_id else "bulk_accounts_all.xlsx"
+    return send_file(buf, as_attachment=True, download_name=fname,
+                     mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+@app.route("/api/bulk-delete", methods=["POST"])
+def api_bulk_delete():
+    body = request.get_json(force=True)
+    ids = body.get("ids", [])
+    deleted = storage.delete_bulk_accounts(ids)
+    return jsonify({"ok": True, "deleted": deleted})
+
+
+@app.route("/api/bulk-log/<int:run_id>")
+def api_bulk_log(run_id):
+    log_path = os.path.join(os.path.dirname(__file__), "..", "logs", f"bulk_run_{run_id}.txt")
+    if not os.path.exists(log_path):
+        return jsonify({"lines": []})
+    with open(log_path, encoding="utf-8") as f:
+        lines = f.readlines()
+    return jsonify({"lines": [l.rstrip() for l in lines[-200:]]})
 
 
 if __name__ == "__main__":

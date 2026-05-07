@@ -277,13 +277,33 @@ def _click_visible_button(page: Page, pattern: str, timeout=8000):
 
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _click_signup_entry(page: Page):
+    """Click whichever Sign Up / Get Started button is visible in the header."""
+    patterns = [r"^sign up$", r"^get started$", r"^create account$",
+                r"sign up", r"get started for free", r"create free account"]
+    deadline = time.time() + ELEM_TIMEOUT / 1000
+    while time.time() < deadline:
+        for pat in patterns:
+            rx = re.compile(pat, re.I)
+            for role in ("button", "link"):
+                for el in page.get_by_role(role, name=rx).all():
+                    try:
+                        if el.is_visible() and el.is_enabled():
+                            el.click(timeout=3000)
+                            return
+                    except Exception:
+                        pass
+        time.sleep(0.5)
+    raise TimeoutError("Could not find a Sign Up entry point on the page")
+
+
 def register(page: Page, email: str, password: str):
     """Open the homepage, click Sign up, fill email, solve Turnstile, submit."""
     _goto(page, HOMEPAGE)
     _dismiss_cookie_banner(page)
 
-    # Open auth modal via the header "Sign up" button
-    _click_visible_button(page, r"^sign up$", timeout=ELEM_TIMEOUT)
+    # Open auth modal — try multiple button/link text variants
+    _click_signup_entry(page)
     time.sleep(0.8)
 
     # Switch to email form
@@ -380,7 +400,7 @@ def register(page: Page, email: str, password: str):
 
 def confirm_email(page: Page, link: str, password: str):
     """Navigate to the email verification link; set password if prompted."""
-    page.goto(link, wait_until="load", timeout=NAV_TIMEOUT)
+    _goto(page, link)  # handles Cloudflare challenge
     time.sleep(3)
 
     pw_fields = [f for f in page.locator("input[type='password']").all()

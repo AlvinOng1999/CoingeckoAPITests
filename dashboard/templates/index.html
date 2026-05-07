@@ -243,6 +243,11 @@
 
     /* Dot indicator */
     .dot-alive { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #000; margin-right: 8px; }
+
+    .reveal-wrap { display: inline-flex; align-items: center; gap: 6px; }
+    .reveal-val { font-family: monospace; font-size: .8rem; }
+    .reveal-btn { background: none; border: none; cursor: pointer; color: #aaa; padding: 0; font-size: .85rem; line-height: 1; }
+    .reveal-btn:hover { color: #000; }
   </style>
 </head>
 <body>
@@ -254,6 +259,7 @@
     </span>
     <div class="d-flex gap-1">
       <a href="/" class="nav-pill active">Dashboard</a>
+      <a href="/bulk-register" class="nav-pill">Bulk Register</a>
       <a href="/search" class="nav-pill">Search</a>
       <a href="/backtest" class="nav-pill">Backtest</a>
     </div>
@@ -308,6 +314,12 @@
         </div>
       </div>
     </div>
+  </div>
+
+  <!-- Usage sync bar -->
+  <div class="d-flex align-items-center gap-3 mb-4 ms-1" style="font-size:.8rem;">
+    <span id="sync-status" style="color:#aaa">Usage is locally tracked — may differ from CoinGecko if the key is used elsewhere.</span>
+    <button id="btn-sync-all" onclick="syncAll()" style="background:none;border:none;color:#0d6efd;font-size:.8rem;cursor:pointer;padding:0;white-space:nowrap">↻ Sync from CoinGecko</button>
   </div>
 
   <!-- Global Market -->
@@ -385,6 +397,7 @@
           <tr>
             <th class="ps-4">#</th>
             <th>Email</th>
+            <th>Password</th>
             <th>API Key</th>
             <th>Used</th>
             <th>Remaining</th>
@@ -406,9 +419,16 @@
             </td>
             <td style="font-size:.85rem;color:#333">{{ acc.email }}</td>
             <td>
-              <span class="badge-key" onclick="toggleKey(this)" data-full="{{ acc.api_key }}">
-                {{ acc.api_key[:12] }}••••
-              </span>
+              <div class="reveal-wrap">
+                <span class="reveal-val" data-masked="••••••••" data-revealed="0">••••••••</span>
+                <button class="reveal-btn" onclick="toggleReveal(this, '{{ acc.cg_password }}')">👁</button>
+              </div>
+            </td>
+            <td>
+              <div class="reveal-wrap">
+                <span class="reveal-val" data-masked="{{ acc.api_key[:12] }}••••" data-revealed="0">{{ acc.api_key[:12] }}••••</span>
+                <button class="reveal-btn" onclick="toggleReveal(this, '{{ acc.api_key }}')">👁</button>
+              </div>
             </td>
             <td style="font-size:.9rem;font-weight:600" id="row-used-{{ acc.id }}">{{ "{:,}".format(acc.calls_used) }}</td>
             <td style="font-size:.9rem;font-weight:600" id="row-left-{{ acc.id }}">
@@ -445,7 +465,7 @@
           </tr>
           {% else %}
           <tr>
-            <td colspan="8" class="text-center py-5" style="color:#aaa">
+            <td colspan="9" class="text-center py-5" style="color:#aaa">
               No API keys yet — click <strong>+ Generate Key</strong> to start.
             </td>
           </tr>
@@ -819,6 +839,19 @@ function toggleKey(el) {
   }
 }
 
+function toggleReveal(btn, fullVal) {
+  const span = btn.previousElementSibling;
+  if (span.dataset.revealed === '1') {
+    span.textContent = span.dataset.masked;
+    span.dataset.revealed = '0';
+    btn.textContent = '👁';
+  } else {
+    span.textContent = fullVal;
+    span.dataset.revealed = '1';
+    btn.textContent = '🙈';
+  }
+}
+
 function onCreateSubmit() {
   const btn = document.getElementById("create-btn");
   btn.disabled = true;
@@ -936,6 +969,28 @@ async function loadUsageStats() {
       if (elPct)  elPct.textContent = pct + "% used";
     });
   } catch (_) {}
+}
+
+async function syncAll() {
+  const btn    = document.getElementById('btn-sync-all');
+  const status = document.getElementById('sync-status');
+  btn.disabled = true;
+  btn.textContent = '↻ Syncing…';
+  try {
+    const d = await fetch('/api/sync-all', { method: 'POST' }).then(r => r.json());
+    if (d.pro_required) {
+      status.innerHTML = '<span style="color:#dc3545">⚠ GET /key requires a Pro subscription — keeping local counts.</span>';
+    } else if (d.synced > 0) {
+      status.innerHTML = '<span style="color:#16a34a">✓ Synced ' + d.synced + ' of ' + d.total + ' key(s) from CoinGecko.</span>';
+      await loadUsageStats();
+    } else {
+      status.innerHTML = '<span style="color:#dc3545">Sync failed — check network or API key.</span>';
+    }
+  } catch (_) {
+    status.innerHTML = '<span style="color:#dc3545">Sync request failed.</span>';
+  }
+  btn.disabled = false;
+  btn.textContent = '↻ Sync from CoinGecko';
 }
 
 // ── Stress test ────────────────────────────────────────────────────────────────
