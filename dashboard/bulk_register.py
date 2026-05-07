@@ -93,10 +93,6 @@ def _worker(run_id: int, verify_email: bool, stop_event: threading.Event,
     Retries the full mailbox + registration flow up to MAX_ATTEMPTS times.
     Returns (email, password, status, error_str).
     """
-    from camoufox.sync_api import Camoufox
-    import temp_email
-    import coingecko
-
     if stagger_delay > 0 and not stop_event.is_set():
         time.sleep(stagger_delay)
 
@@ -115,6 +111,9 @@ def _worker(run_id: int, verify_email: bool, stop_event: threading.Event,
         email = ""
         password = ""
         try:
+            from camoufox.sync_api import Camoufox
+            import temp_email
+            import coingecko
             if attempt > 1:
                 backoff = random.uniform(2, 5)
                 _step_log(run_id, "—",
