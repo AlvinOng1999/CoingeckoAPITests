@@ -72,7 +72,7 @@ def _sse(data: dict) -> str:
     return f"data: {json.dumps(data)}\n\n"
 
 
-def _make_event(run_id, done, total, email, status, errors, complete=False) -> str:
+def _make_event(run_id, done, total, email, status, errors, complete=False, subscribed=False) -> str:
     return _sse({
         "run_id": run_id,
         "done": done,
@@ -81,23 +81,25 @@ def _make_event(run_id, done, total, email, status, errors, complete=False) -> s
         "status": status,
         "errors": errors,
         "complete": complete,
+        "subscribed": subscribed,
     })
 
 
 # ── Browser Pool ──────────────────────────────────────────────────────────────
 
-def _worker(run_id: int, verify_email: bool, stop_event: threading.Event,
+def _worker(run_id: int, verify_email: bool, subscribe_email: bool, stop_event: threading.Event,
             stagger_delay: float = 0.0):
     """
     Creates one CoinGecko account using a real Camoufox browser.
     Retries the full mailbox + registration flow up to MAX_ATTEMPTS times.
-    Returns (email, password, status, error_str).
+    Returns (email, password, status, error_str, subscribed).
     """
+    print(f"[bulk] worker started (run_id={run_id}, stagger={stagger_delay:.1f}s)", flush=True)
     if stagger_delay > 0 and not stop_event.is_set():
         time.sleep(stagger_delay)
 
     if stop_event.is_set():
-        return "", "", "stopped", ""
+        return "", "", "stopped", "", False
 
     MAX_ATTEMPTS = 3
     last_err = ""
@@ -106,7 +108,7 @@ def _worker(run_id: int, verify_email: bool, stop_event: threading.Event,
 
     for attempt in range(1, MAX_ATTEMPTS + 1):
         if stop_event.is_set():
-            return "", "", "stopped", ""
+            return "", "", "stopped", "", False
 
         email = ""
         password = ""
@@ -154,24 +156,39 @@ def _worker(run_id: int, verify_email: bool, stop_event: threading.Event,
                     _step_log(run_id, email,
                               f"Verification skipped (saved as unverified): {_clean_error(verify_exc)}")
 
-            storage.save_bulk_account(run_id, email, password, status)
+            # ── Step 4: Newsletter subscription (soft failure — no retry) ────────
+            subscribed = False
+            if subscribe_email and not stop_event.is_set():
+                try:
+                    _step_log(run_id, email, "Subscribing to CoinGecko newsletter...")
+                    with Camoufox(headless=True, geoip=True) as browser:
+                        page = browser.new_page()
+                        subscribed = coingecko.subscribe_newsletter(page, email, password)
+                    if subscribed:
+                        _step_log(run_id, email, "Newsletter subscription enabled")
+                    else:
+                        _step_log(run_id, email, "Newsletter subscription skipped (not found on settings page)")
+                except Exception as sub_exc:
+                    _step_log(run_id, email, f"Newsletter subscription failed: {_clean_error(sub_exc)}")
+
+            storage.save_bulk_account(run_id, email, password, status, subscribed=int(subscribed))
             _append_log(run_id, email, status)
-            return email, password, status, ""
+            return email, password, status, "", subscribed
 
         except Exception as exc:
             last_err = _clean_error(exc)
             label = email or "—"
-            print(f"[bulk] attempt {attempt}/{MAX_ATTEMPTS} failed ({label}): {last_err}")
+            print(f"[bulk] attempt {attempt}/{MAX_ATTEMPTS} failed ({label}): {last_err}", flush=True)
             _step_log(run_id, label, f"Attempt {attempt}/{MAX_ATTEMPTS} failed: {last_err}")
             if attempt == MAX_ATTEMPTS:
                 if email:
                     storage.save_bulk_account(run_id, email, password, "failed", last_err)
                 _append_log(run_id, label, "failed", last_err)
 
-    return final_email, final_password, "failed", last_err
+    return final_email, final_password, "failed", last_err, False
 
 
-def run_bulk(run_id: int, target_count: int, verify_email: bool, max_workers: int = 5):
+def run_bulk(run_id: int, target_count: int, verify_email: bool, subscribe_email: bool = False, max_workers: int = 5):
     """SSE generator. Yields SSE-formatted JSON strings for target_count accounts."""
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -179,6 +196,7 @@ def run_bulk(run_id: int, target_count: int, verify_email: bool, max_workers: in
     done = 0
     errors = 0
 
+    print(f"[bulk] run_bulk started: run_id={run_id}, target={target_count}, verify={verify_email}, subscribe={subscribe_email}", flush=True)
     yield _sse({"message": f"Initialising — launching {max_workers} browser workers..."})
 
     futures_map = {}
@@ -188,7 +206,7 @@ def run_bulk(run_id: int, target_count: int, verify_email: bool, max_workers: in
             if stop_event.is_set():
                 break
             delay = random.uniform(0, max_workers * 3)
-            f = pool.submit(_worker, run_id, verify_email, stop_event, delay)
+            f = pool.submit(_worker, run_id, verify_email, subscribe_email, stop_event, delay)
             futures_map[f] = True
 
         for future in as_completed(futures_map):
@@ -198,10 +216,10 @@ def run_bulk(run_id: int, target_count: int, verify_email: bool, max_workers: in
             if future.cancelled():
                 continue
             try:
-                email, _pw, status, err = future.result()
+                email, _pw, status, err, subscribed = future.result()
             except Exception as fut_exc:
                 err = _clean_error(fut_exc)
-                print(f"[bulk] worker raised unexpected exception: {err}")
+                print(f"[bulk] worker raised unexpected exception: {err}", flush=True)
                 errors += 1
                 storage.increment_bulk_run_counts(run_id, failed=1)
                 yield _make_event(run_id, done, target_count, "", "failed", errors)
@@ -211,13 +229,13 @@ def run_bulk(run_id: int, target_count: int, verify_email: bool, max_workers: in
             elif status in ("verified", "unverified"):
                 done += 1
                 storage.increment_bulk_run_counts(run_id, created=1)
-                print(f"[bulk] ✓ created {email} ({status}) — {done}/{target_count}")
+                print(f"[bulk] ✓ created {email} ({status}, subscribed={subscribed}) — {done}/{target_count}", flush=True)
             else:
                 errors += 1
                 storage.increment_bulk_run_counts(run_id, failed=1)
-                print(f"[bulk] ✗ failed {email or '(no email)'}: {err}")
+                print(f"[bulk] ✗ failed {email or '(no email)'}: {err}", flush=True)
 
-            yield _make_event(run_id, done, target_count, email, status, errors)
+            yield _make_event(run_id, done, target_count, email, status, errors, subscribed=subscribed)
     finally:
         pool.shutdown(wait=False, cancel_futures=True)
 

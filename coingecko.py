@@ -3,10 +3,16 @@ import time
 from playwright.sync_api import Page, TimeoutError as PWTimeout
 import captcha_solver
 
-HOMEPAGE    = "https://www.coingecko.com/"
-SIGNIN_URL  = "https://www.coingecko.com/en/users/sign_in"
-API_DASH    = "https://www.coingecko.com/en/developers/dashboard"
-API_PRICING = "https://www.coingecko.com/en/api/pricing"
+HOMEPAGE       = "https://www.coingecko.com/"
+SIGNIN_URL     = "https://www.coingecko.com/en/users/sign_in"
+API_DASH       = "https://www.coingecko.com/en/developers/dashboard"
+API_PRICING    = "https://www.coingecko.com/en/api/pricing"
+NEWSLETTER_URL = "https://newsletter.coingecko.com/landing/api_updates_subscribe"
+
+_NEWSLETTER_SUCCESS_KWS = [
+    "success", "thank you", "thanks", "check your email",
+    "subscribed", "you're in", "you are in", "welcome", "confirmed",
+]
 
 NAV_TIMEOUT  = 60_000
 ELEM_TIMEOUT = 20_000
@@ -470,6 +476,113 @@ def login(page: Page, email: str, password: str):
     _click_visible_button(page, r"^login$", timeout=8000)
     page.wait_for_load_state("load", timeout=NAV_TIMEOUT)
     time.sleep(2)
+
+
+def _subscribe_snap(page: Page, name: str):
+    """Save a full-page debug screenshot to logs/subscribe_debug/."""
+    try:
+        import os as _os
+        d = _os.path.join(_os.path.dirname(__file__), "logs", "subscribe_debug")
+        _os.makedirs(d, exist_ok=True)
+        page.screenshot(path=_os.path.join(d, f"{name}.png"), full_page=True)
+    except Exception:
+        pass
+
+
+def _js_fill(page: Page, selector: str, value: str) -> bool:
+    """Fill an input via JS native setter — bypasses label/overlay click interception."""
+    return page.evaluate("""([sel, val]) => {
+        const inp = document.querySelector(sel);
+        if (!inp) return false;
+        const setter = Object.getOwnPropertyDescriptor(
+            window.HTMLInputElement.prototype, 'value'
+        ).set;
+        setter.call(inp, val);
+        inp.dispatchEvent(new Event('input',  {bubbles: true}));
+        inp.dispatchEvent(new Event('change', {bubbles: true}));
+        inp.dispatchEvent(new Event('blur',   {bubbles: true}));
+        return true;
+    }""", [selector, value])
+
+
+def subscribe_newsletter(page: Page, email: str, password: str) -> bool:
+    """
+    Subscribe email to CoinGecko newsletter via newsletter.coingecko.com.
+    No login required.
+    Confirmed form: input[name='name'], input[name='email'], button[type='submit'].
+    Label divs intercept clicks — fields are filled via JS native setter.
+    """
+    print(f"  [subscribe] loading {NEWSLETTER_URL}", flush=True)
+    page.goto(NEWSLETTER_URL, wait_until="load", timeout=30_000)
+    _wait_cloudflare(page)
+    _dismiss_cookie_banner(page)
+    _subscribe_snap(page, "01_loaded")
+    time.sleep(2)
+
+    # ── Fill name via JS (label overlay intercepts normal clicks) ─────────────
+    filled_name = _js_fill(page, "input[name='name']", "Crypto User")
+    print(f"  [subscribe] name filled={filled_name}", flush=True)
+
+    # ── Fill email via JS ─────────────────────────────────────────────────────
+    filled_email = _js_fill(page, "input[name='email']", email)
+    print(f"  [subscribe] email filled={filled_email}", flush=True)
+    if not filled_email:
+        print("  [subscribe] ERROR: email field not found", flush=True)
+        _subscribe_snap(page, "02_no_email_field")
+        return False
+
+    _subscribe_snap(page, "02_form_filled")
+
+    # ── Click Submit — button[type='submit'] confirmed present ────────────────
+    submitted = page.evaluate("""() => {
+        const btn = document.querySelector("button[type='submit']");
+        if (btn && btn.offsetParent !== null) {
+            btn.scrollIntoView({behavior:'instant', block:'center'});
+            btn.click();
+            return btn.textContent.trim() || 'submit';
+        }
+        return null;
+    }""")
+    print(f"  [subscribe] submit clicked: {submitted!r}", flush=True)
+    if not submitted:
+        print("  [subscribe] no submit button found", flush=True)
+        _subscribe_snap(page, "03_no_button")
+        return False
+
+    _subscribe_snap(page, "03_after_submit")
+
+    # ── Poll for real success: email input disappears from DOM ────────────────
+    # (keywords in initial HTML are false positives — form hiding is unambiguous)
+    print("  [subscribe] polling for form to disappear (up to 30 s)...", flush=True)
+    deadline = time.time() + 30
+    while time.time() < deadline:
+        email_visible = page.evaluate("""() => {
+            const inp = document.querySelector("input[name='email']");
+            return !!(inp && inp.offsetParent !== null);
+        }""")
+        if not email_visible:
+            _subscribe_snap(page, "04_success")
+            print("  [subscribe] form hidden — subscription confirmed!", flush=True)
+            return True
+        # If a Turnstile appeared after submit, wait for auto-solve then re-click
+        for el in page.locator("input[name='cf-turnstile-response']").all():
+            try:
+                if (el.get_attribute("value") or "").strip():
+                    print("  [subscribe] Turnstile solved — re-submitting", flush=True)
+                    page.evaluate("""() => {
+                        const btn = document.querySelector("button[type='submit']");
+                        if (btn) btn.click();
+                    }""")
+                    time.sleep(2)
+                    break
+            except Exception:
+                pass
+        time.sleep(2)
+
+    _subscribe_snap(page, "04_timeout")
+    visible = page.evaluate("() => document.body.innerText.replace(/[^\\x00-\\x7F]/g,'?').slice(0,200)")
+    print(f"  [subscribe] timeout — visible text: {visible!r}", flush=True)
+    return False
 
 
 def _random_company_name() -> str:

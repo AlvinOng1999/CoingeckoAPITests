@@ -538,12 +538,13 @@ def bulk_register_page():
 @app.route("/api/bulk-start", methods=["POST"])
 def api_bulk_start():
     body = request.get_json(force=True)
-    count       = int(body.get("count", 10))
-    verify      = bool(body.get("verify_email", True))
-    max_workers = min(int(body.get("max_workers", 5)), 20)
+    count           = int(body.get("count", 10))
+    verify          = bool(body.get("verify_email", True))
+    subscribe       = bool(body.get("subscribe_email", False))
+    max_workers     = min(int(body.get("max_workers", 5)), 20)
 
     run_id = bulk_register.start_run("browser", count, verify)
-    return jsonify({"run_id": run_id, "max_workers": max_workers})
+    return jsonify({"run_id": run_id, "max_workers": max_workers, "subscribe_email": subscribe})
 
 
 @app.route("/api/bulk-stop", methods=["POST"])
@@ -564,13 +565,14 @@ def api_bulk_stream(run_id):
 
     verify      = bool(run["verify_email"])
     count       = run["target_count"]
+    subscribe   = request.args.get("subscribe_email", "false").lower() == "true"
     max_workers = min(request.args.get("max_workers", type=int, default=5), 20)
 
     stop_event = bulk_register._STOP_EVENTS.get(run_id, threading.Event())
     bulk_register._STOP_EVENTS[run_id] = stop_event
 
     def generate():
-        for event in bulk_register.run_bulk(run_id, count, verify, max_workers):
+        for event in bulk_register.run_bulk(run_id, count, verify, subscribe, max_workers):
             yield event
 
     return Response(
@@ -604,7 +606,7 @@ def api_bulk_export():
     # ── Sheet 1: Accounts ──────────────────────────────────────────────────────
     ws1 = wb.active
     ws1.title = "Accounts"
-    headers = ["#", "Email", "Password", "Status", "Verified", "Mode", "Run ID", "Created At"]
+    headers = ["#", "Email", "Password", "Status", "Verified", "Subscribed", "Mode", "Run ID", "Created At"]
     ws1.append(headers)
     header_font = Font(bold=True, color="FFFFFF")
     header_fill = PatternFill("solid", fgColor="000000")
@@ -621,6 +623,7 @@ def api_bulk_export():
             acc["password"],
             acc["status"],
             "Yes" if acc["verified"] else "No",
+            "Yes" if acc.get("subscribed") else "No",
             acc.get("mode", ""),
             acc["run_id"],
             acc["created_at"],

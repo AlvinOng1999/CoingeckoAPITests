@@ -39,7 +39,6 @@
     .prog-panel { background: #fff; border: 1px solid #e0e0e0; border-radius: 10px; padding: 18px 20px; margin-bottom: 20px; display: none; }
     .prog-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
     .prog-label { font-size: .82rem; font-weight: 600; color: #444; }
-    .prog-stats { font-size: .82rem; color: #888; }
     .prog-bar-wrap { background: #f0f0f0; border-radius: 6px; height: 8px; margin-bottom: 14px; }
     .prog-bar-fill { background: #000; height: 8px; border-radius: 6px; width: 0%; transition: width .3s; }
     .log-panels { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
@@ -67,6 +66,8 @@
     .s-unverified { color: #dc2626; }
     .s-pending { color: #d97706; }
     .s-failed { color: #6b7280; }
+    .s-subscribed { color: #16a34a; font-weight: 600; }
+    .s-not-subscribed { color: #9ca3af; }
     .tbl-empty { padding: 32px; text-align: center; color: #aaa; font-size: .85rem; }
     .btn-danger { background: #dc3545; color: #fff; border: none; padding: 5px 14px; border-radius: 6px; font-size: .78rem; font-weight: 600; cursor: pointer; }
     .btn-danger:disabled { opacity: .4; cursor: not-allowed; }
@@ -115,6 +116,15 @@
         </div>
       </div>
       <div class="ctrl-group" style="justify-content:flex-end;padding-bottom:2px">
+        <div class="toggle-row">
+          <label class="toggle">
+            <input type="checkbox" id="tog-subscribe">
+            <span class="tslider"></span>
+          </label>
+          Subscribe to CoinGecko Emails
+        </div>
+      </div>
+      <div class="ctrl-group" style="justify-content:flex-end;padding-bottom:2px">
         <div style="display:flex;gap:8px">
           <button class="btn-start" id="btn-start" onclick="startRun()">&#9654; Start</button>
           <button class="btn-stop" id="btn-stop" disabled onclick="stopRun()">&#9632; Stop</button>
@@ -127,7 +137,6 @@
   <div class="prog-panel" id="prog-panel">
     <div class="prog-header">
       <span class="prog-label" id="prog-label">Run in progress</span>
-      <span class="prog-stats" id="prog-stats"><span style="color:#16a34a;font-weight:600">0 created</span> &middot; <span style="color:#dc2626;font-weight:600">0 failed</span></span>
     </div>
     <div class="prog-bar-wrap" id="prog-bar-wrap">
       <div class="prog-bar-fill" id="prog-bar"></div>
@@ -189,20 +198,23 @@ let allAccounts = [];
 let currentPage = 1;
 let pageSize = 25;
 let selectedIds = new Set();
+let liveEventCount = 0;
 
 async function startRun() {
   const count = parseInt(document.getElementById('inp-count').value) || 10;
   const workers = Math.min(parseInt(document.getElementById('inp-workers').value) || 5, 20);
   const verify = document.getElementById('tog-verify').checked;
+  const subscribe = document.getElementById('tog-subscribe').checked;
 
   const resp = await fetch('/api/bulk-start', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({count, verify_email: verify, max_workers: workers}),
+    body: JSON.stringify({count, verify_email: verify, subscribe_email: subscribe, max_workers: workers}),
   });
   const data = await resp.json();
   currentRunId = data.run_id;
 
+  liveEventCount = 0;
   document.getElementById('btn-start').disabled = true;
   document.getElementById('btn-stop').disabled = false;
   document.getElementById('prog-panel').style.display = 'block';
@@ -210,7 +222,8 @@ async function startRun() {
   document.getElementById('log-feed').innerHTML = '<div class="log-info">Launching run #' + currentRunId + '...</div>';
   document.getElementById('step-log').innerHTML = '';
 
-  sseSource = new EventSource('/api/bulk-stream/' + currentRunId + '?max_workers=' + workers);
+  const streamUrl = '/api/bulk-stream/' + currentRunId + '?max_workers=' + workers + '&subscribe_email=' + subscribe;
+  sseSource = new EventSource(streamUrl);
   sseSource.onmessage = function(e) {
     const d = JSON.parse(e.data);
     updateProgress(d);
@@ -233,20 +246,21 @@ function updateProgress(d) {
   }
   const done = d.done || 0;
   const total = d.total;
-  const errors = d.errors || 0;
   if (total) {
     document.getElementById('prog-bar').style.width = Math.min(100, (done / total) * 100) + '%';
   }
-  const stats = '<span style="color:#16a34a;font-weight:600">' + done + ' created</span>' +
-               ' &middot; <span style="color:#dc2626;font-weight:600">' + errors + ' failed</span>';
-  document.getElementById('prog-stats').innerHTML = stats;
-  if (d.email && d.status) {
+  if (d.status === 'failed' || (d.email && d.status)) {
     const feed = document.getElementById('log-feed');
     const line = document.createElement('div');
-    const cls = (d.status === 'verified' || d.status === 'unverified') ? 'log-ok' : d.status === 'failed' ? 'log-err' : 'log-info';
-    const label = d.status === 'verified' ? 'registered & verified' : d.status === 'unverified' ? 'registered (no verification)' : 'failed';
+    const isOk = d.status === 'verified' || d.status === 'unverified';
+    const cls = isOk ? 'log-ok' : 'log-err';
+    const num = ++liveEventCount;
+    const statusLabel = d.status === 'verified' ? 'registered & verified' : d.status === 'unverified' ? 'registered (no verification)' : 'failed';
+    const emailDisplay = d.email || '(no email — failed before mailbox created)';
+    const subLabel = (isOk && document.getElementById('tog-subscribe').checked)
+      ? (d.subscribed ? ' | subscribed' : ' | not subscribed') : '';
     line.className = cls;
-    line.textContent = '[' + (d.status === 'failed' ? '✗' : '✓') + '] ' + d.email + ' — ' + label;
+    line.textContent = '#' + num + ' [' + (isOk ? '✓' : '✗') + '] ' + emailDisplay + ' — ' + statusLabel + subLabel;
     feed.appendChild(line);
     feed.scrollTop = feed.scrollHeight;
   }
@@ -408,12 +422,16 @@ function renderTable() {
 
   const rows = pageAccts.map(function(a, i) {
     const chk = selectedIds.has(a.id) ? 'checked' : '';
+    const subBadge = a.subscribed
+      ? '<span class="s-subscribed">✓ Subscribed</span>'
+      : '<span class="s-not-subscribed">— No</span>';
     return '<tr>' +
       '<td><input type="checkbox" class="row-chk" data-id="' + a.id + '" ' + chk + ' onchange="onRowCheck(this)"></td>' +
       '<td style="color:#aaa">' + (total - start - i) + '</td>' +
       '<td class="mono">' + a.email + '</td>' +
       '<td class="mono">' + a.password + '</td>' +
       '<td>' + statusBadge(a.status) + '</td>' +
+      '<td>' + subBadge + '</td>' +
       '<td>' + modeBadge(a.mode) + '</td>' +
       '<td style="color:#aaa">' + relTime(a.created_at) + '</td></tr>';
   }).join('');
@@ -421,7 +439,7 @@ function renderTable() {
   document.getElementById('tbl-body').innerHTML =
     '<table class="accts"><thead><tr>' +
     '<th><input type="checkbox" id="chk-all" ' + (allPageSel ? 'checked' : '') + ' onchange="toggleSelectAll()"></th>' +
-    '<th>#</th><th>Email</th><th>Password</th><th>Verification</th><th>Mode</th><th>Created</th>' +
+    '<th>#</th><th>Email</th><th>Password</th><th>Verification</th><th>Subscribed</th><th>Mode</th><th>Created</th>' +
     '</tr></thead><tbody>' + rows + '</tbody></table>';
 
   const chkAll = document.getElementById('chk-all');

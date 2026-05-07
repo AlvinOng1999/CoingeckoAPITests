@@ -129,6 +129,7 @@ def init_bulk_db():
                 verified   INTEGER DEFAULT 0,
                 status     TEXT DEFAULT 'pending',
                 error      TEXT,
+                subscribed INTEGER DEFAULT 0,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -167,12 +168,12 @@ def increment_bulk_run_counts(run_id: int, created: int = 0, failed: int = 0):
         con.commit()
 
 
-def save_bulk_account(run_id: int, email: str, password: str, status: str, error: str = None):
+def save_bulk_account(run_id: int, email: str, password: str, status: str, error: str = None, subscribed: int = 0):
     verified = 1 if status == "verified" else 0
     with _conn() as con:
         con.execute(
-            "INSERT INTO bulk_accounts (run_id, email, password, verified, status, error) VALUES (?,?,?,?,?,?)",
-            (run_id, email, password, verified, status, error),
+            "INSERT INTO bulk_accounts (run_id, email, password, verified, status, error, subscribed) VALUES (?,?,?,?,?,?,?)",
+            (run_id, email, password, verified, status, error, subscribed),
         )
         con.commit()
 
@@ -214,6 +215,16 @@ def get_bulk_accounts(run_id: int = None, status: str = None, mode: str = None) 
         return [dict(r) for r in rows]
 
 
+def _migrate_bulk():
+    with _conn() as con:
+        try:
+            con.execute("ALTER TABLE bulk_accounts ADD COLUMN subscribed INTEGER DEFAULT 0")
+            con.commit()
+        except Exception:
+            pass  # column already exists
+
+
 init_db()
 _migrate()
 init_bulk_db()
+_migrate_bulk()
